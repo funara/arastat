@@ -1,7 +1,7 @@
 # ARAStat
 
 <p align="center">
-  <img src="src/renderer/public/ARAStat.png" alt="ARAStat Logo" width="380" />
+  <img src="src/public/ARAStat.png" alt="ARAStat Logo" width="380" />
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 
 ## Overview
 
-**ARAStat** is an open-source, offline-first desktop statistical analysis software designed as a fast, accessible, and privacy-conscious alternative to traditional tools like SPSS, JASP, and Jamovi. Built with an Electron and Vue frontend backed by a verified native Python statistical engine, ARAStat combines spreadsheet data management with 23 statistical tests, publication-ready output tables, interactive Plotly visualizations, and an AI copilot (**ARA Assistant**).
+**ARAStat** is an open-source, offline-first desktop statistical analysis software designed as a fast, accessible, and privacy-conscious alternative to traditional tools like SPSS, JASP, and Jamovi. Built with a Tauri v2 (Rust) host and a Vue 3 renderer backed by a verified native Python statistical engine, ARAStat combines spreadsheet data management with 23 statistical tests, publication-ready output tables, interactive Plotly visualizations, and an AI copilot (**ARA Assistant**).
 
 ---
 
@@ -75,7 +75,7 @@ ARAStat features an optional, privacy-respecting AI copilot that acts as a stati
 - **In-App Model Discovery**:
   - Automatically fetch and select from available models directly from your endpoint URL.
 - **Local Security**:
-  - API keys are stored in encrypted local storage and handled exclusively in the main Electron process; keys are never transmitted to third-party telemetry servers or exposed to renderer scripts.
+  - API keys are stored in the **OS native credential store** (Windows Credential Manager, macOS Keychain, or the Linux Secret Service) and used exclusively by the Rust host; they are never written to a settings file, transmitted to third-party telemetry servers, or exposed to renderer scripts. Only a masked tail hint (last 4 characters) ever reaches the UI.
 
 ---
 
@@ -94,8 +94,6 @@ git clone https://github.com/ARAEcosystem/arastat.git
 cd arastat
 npm install
 ```
-
-> **Note on Windows / Electron Install**: If your npm policy restricts lifecycle scripts (`allowScripts`), run `node node_modules/electron/install.js` once so Electron can download its local binary.
 
 ### 2. Set Up the Python Statistical Engine
 
@@ -129,22 +127,63 @@ engine/.venv/bin/python -m pip install -r engine/requirements.txt
 ## Development & Test Commands
 
 ```bash
-# Start desktop app in development mode with HMR
+# Start the Tauri v2 desktop app in development mode with HMR
 npm run dev
+
+# Build a signed Windows installer (NSIS) + updater artifacts
+npm run build
+
+# Build just the frontend bundle (src/ -> dist/)
+npm run build:vite
 
 # Run full TypeScript typecheck
 npm run typecheck
 
-# Run unit and golden-reference integration tests (109 tests)
+# Run unit and golden-reference integration tests
 npm test
 
-# Build production bundle for Main, Preload, and Renderer
-npm run build
+# Run the Rust host + live-engine seam tests
+npm run test:rust
 
-# Package desktop installer / portable executable
-npm run dist
-npm run dist:win
+# Regenerate the tier-2 reference fixtures (writes tests/fixtures/tier2)
+engine/.venv/Scripts/python.exe engine/generate_fixtures.py   # Windows
+engine/.venv/bin/python engine/generate_fixtures.py          # macOS / Linux
 ```
+
+### Updater signing keys
+
+`npm run build` signs the update package with a Minisign key. Generate a
+keypair once and keep the private key outside the repo:
+
+```bash
+npx tauri signer generate -w ~/.tauri/arastat.key
+```
+
+Then export the private key (and its password, if set) for the release build, and
+paste the printed **public** key into `plugins.updater.pubkey` in
+`src-tauri/tauri.conf.json`:
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/arastat.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+```
+
+Publish the resulting `.exe`, its `.sig`, and a `latest.json` manifest to the
+GitHub release the `endpoints` list points at. Without a key, the updater stays
+disabled and the app makes zero update requests at startup.
+
+To exercise the real check/download/verify path without publishing a release,
+point a **debug** run at any static `latest.json` (served over plain HTTP for
+local testing only — Tauri warns about that on a debug build and refuses it in
+release):
+
+```bash
+ARASTAT_UPDATE_ENDPOINT="http://127.0.0.1:8099/latest.json" npm run dev
+```
+
+A manifest advertising a version whose artifact is not signed for that exact
+version is rejected by Minisign verification, which is the expected outcome of
+mismatched test fixtures.
 
 ---
 
@@ -154,29 +193,36 @@ ARAStat separates presentation, orchestration, and statistical calculation into 
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│                   Renderer Process                     │
+│                  WebView Frontend (Vue 3.5)            │
 │         Vue 3.5 + TypeScript + Vanilla CSS UI          │
 │  (DataGrid, VariableView, ResultsPane, AiDock, Specs)  │
+│  Pure Web I/O: .sav/.xlsx/.csv/.arastat via DataView   │
 └───────────────────────────▲────────────────────────────┘
-                            │  ContextBridge IPC
+                            │  Tauri v2 IPC
+                            │  (typed commands + raw ArrayBuffer)
 ┌───────────────────────────▼────────────────────────────┐
-│                     Main Process                       │
-│    Electron 44 + Node 24 Sandboxed Orchestration       │
-│  - File I/O & Binary Serialization (.sav, .xlsx, .csv) │
-│  - Secure AI Adapter (Gemini & OpenAI-compatible SSE)  │
-│  - Subprocess Lifecycle & IPC Bridge                   │
+│                 ARAStat Host (Rust / Tauri v2)         │
+│  - Native dialogs + binary file I/O (OS picker, no fs  │
+│    scope errors)                                       │
+│  - Async NDJSON-RPC client + Python process lifecycle  │
+│    guarded by a Windows Job Object (kill-on-close)     │
+│  - AI proxy (Gemini + OpenAI-compatible + LAN HTTP)    │
+│  - API key in the OS credential store, never on disk   │
+│  - Signed updater (@tauri-apps/plugin-updater, Minisign)│
 └───────────────────────────▲────────────────────────────┘
                             │  JSON-RPC over stdin/stdout
 ┌───────────────────────────▼────────────────────────────┐
 │                Native Python Stats Engine              │
 │                  CPython 3.12 Subprocess               │
-│        NumPy, SciPy, statsmodels, tabulate, math       │
-│   (23 Verified Statistical Analyses + Error Traps)     │
+│        NumPy, SciPy, statsmodels, pandas, patsy        │
+│  (23 golden-reference analyses + registered extras)    │
 └────────────────────────────────────────────────────────┘
 ```
 
-- **Fail-Safe Startup**: The UI window is shown independently of engine initialization. If Python fails or is missing, the application notifies the user with clear recovery instructions rather than crashing.
-- **Strict Error Handling**: Electron's invoke boundaries return typed engine exceptions preserving user-friendly guidance (e.g., error 1004 when a 2-group test receives 3+ distinct levels).
+- **Fail-Safe Startup**: The UI window is shown independently of engine initialization. If Python fails or is missing, the application reports the condition with clear recovery instructions rather than crashing.
+- **Zero Zombie Processes**: On Windows the engine is bound to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the kernel terminates `python.exe` the moment ARAStat exits or is force-killed.
+- **Strict Error Handling**: The IPC boundary rejects with `{ code, message, userMessage, detail }`, preserving user-facing engine guidance verbatim (e.g., error `1004` when a 2-group test receives 3+ distinct levels).
+- **One Update Modal**: The active update prompt and the post-restart changelog share the single-window Vue modal in `UpdateRestartModal.vue`; no second OS window is spawned.
 
 ---
 

@@ -1,9 +1,9 @@
 // computeHealth + AI-first recommendation fallback tests
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeHealth } from '../src/renderer/src/quality.ts'
-import { getAiRecommendation, ruleBasedRecs } from '../src/renderer/src/advisor.ts'
-import { defaultMeta } from '../src/main/io/types.ts'
+import { computeHealth } from '../src/quality.ts'
+import { getAiRecommendation, ruleBasedRecs } from '../src/advisor.ts'
+import { defaultMeta } from '../src/io/types.ts'
 
 test('computeHealth: 100 rows with 10 missing cells in one of two columns', () => {
   const colA = defaultMeta('score', 'numeric')

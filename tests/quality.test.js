@@ -13,8 +13,8 @@ import {
   scanDirtyCategories,
   scanTypeMismatch,
   scanOutliers
-} from '../src/renderer/src/quality.ts'
-import { defaultMeta } from '../src/main/io/types.ts'
+} from '../src/quality.ts'
+import { defaultMeta } from '../src/io/types.ts'
 
 test('scanIdLike: skips when column measure is already nominal', () => {
   const meta = defaultMeta('emp_name', 'string')

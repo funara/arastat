@@ -1,0 +1,48 @@
+[package]
+name = "arastat"
+version = "0.1.0"
+description = "ARAStat — desktop statistical workbench with an agnostic AI copilot"
+authors = ["ARA Ecosystem"]
+license = "GPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+# Tauri builds the app as a library so mobile targets can reuse it; the binary
+# is a thin entry point.
+name = "arastat_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "macros", "rt-multi-thread", "time", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
+url = "2"
+regex = "1"
+thiserror = "2"
+log = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

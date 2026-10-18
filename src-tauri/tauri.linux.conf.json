@@ -1,0 +1,19 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "ARAStat",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 600,
+        "center": true,
+        "visible": false,
+        "maximized": true,
+        "dragDropEnabled": false,
+        "decorations": true
+      }
+    ]
+  }
+}

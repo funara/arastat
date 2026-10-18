@@ -5,10 +5,10 @@ node_modules/
 
 # Build and distribution outputs
 dist/
-out/
-build/
-release/
-*.blockmap
+
+# Tauri build output and generated ACL schemas
+src-tauri/target/
+src-tauri/gen/schemas/
 
 # Python environments and bytecode
 .venv/

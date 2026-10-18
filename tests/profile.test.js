@@ -1,7 +1,7 @@
 // profileDataset / profileText: aggregates, missing %, complete rows, card text.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { profileDataset, profileText } from '../src/renderer/src/profile.ts'
+import { profileDataset, profileText } from '../src/profile.ts'
 
 const isNull = (col, v) => v === null
 const withCode = (col, v) => v === null || (col === 'a' && v === 99)

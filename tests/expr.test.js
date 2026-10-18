@@ -1,7 +1,7 @@
 // Compute Variable expression evaluator (CSP-safe, no eval): real module import.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { evalExprTokens, tokenizeExpr } from '../src/renderer/src/expr.ts'
+import { evalExprTokens, tokenizeExpr } from '../src/expr.ts'
 
 const toks = tokenizeExpr
 

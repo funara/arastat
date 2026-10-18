@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeFill, computeModeDetails, rowsWithMissing } from '../src/renderer/src/missing.ts'
-import { findSensibleDefaultTestVars } from '../src/renderer/src/advisor.ts'
+import { computeFill, computeModeDetails, rowsWithMissing } from '../src/missing.ts'
+import { findSensibleDefaultTestVars } from '../src/advisor.ts'
 
 test('fill preview: computeFill accurately calculates median for skewed and mean for symmetric numeric columns', () => {
   const isMissing = (v) => v === null || v === ''
@@ -78,7 +78,7 @@ test('test recommendation: findSensibleDefaultTestVars skips ID columns and pair
 })
 
 test('advisor: extractJson handles raw json, markdown fences, and conversational preambles', async () => {
-  const { extractJson } = await import('../src/renderer/src/advisor.ts')
+  const { extractJson } = await import('../src/advisor.ts')
   assert.deepEqual(extractJson('{"hello":"world"}'), { hello: 'world' })
   assert.deepEqual(extractJson('```json\n{"actions":[{"title":"Test"}]}\n```'), { actions: [{ title: 'Test' }] })
   assert.deepEqual(extractJson('Here is your analysis:\n```json\n{"score":90}\n```\nHope that helps!'), { score: 90 })
@@ -86,7 +86,7 @@ test('advisor: extractJson handles raw json, markdown fences, and conversational
 })
 
 test('advisor: generateDatasetEdaHypotheses creates sensible Titanic-like test pairings', async () => {
-  const { generateDatasetEdaHypotheses } = await import('../src/renderer/src/advisor.ts')
+  const { generateDatasetEdaHypotheses } = await import('../src/advisor.ts')
   const titanicCols = [
     { name: 'PassengerId', type: 'numeric', measure: 'nominal' },
     { name: 'Survived', type: 'numeric', measure: 'nominal' },
@@ -106,9 +106,9 @@ test('dummy_testdata: end-to-end EDA quality scan & smart hypothesis detection',
   const { readFileSync } = await import('node:fs')
   const { join, dirname } = await import('node:path')
   const { fileURLToPath } = await import('node:url')
-  const { importCsvBytes } = await import('../src/main/io/csv.ts')
-  const { scanQuality } = await import('../src/renderer/src/quality.ts')
-  const { generateDatasetEdaHypotheses } = await import('../src/renderer/src/advisor.ts')
+  const { importCsvBytes } = await import('../src/io/csv.ts')
+  const { scanQuality } = await import('../src/quality.ts')
+  const { generateDatasetEdaHypotheses } = await import('../src/advisor.ts')
 
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
   const csvBuffer = readFileSync(join(root, 'tests', 'dummy_testdata.csv'))
@@ -143,9 +143,9 @@ test('data health: issue grouping categorization separates scales, integrity, an
   const { readFileSync } = await import('node:fs')
   const { join, dirname } = await import('node:path')
   const { fileURLToPath } = await import('node:url')
-  const { importCsvBytes } = await import('../src/main/io/csv.ts')
-  const { scanQuality } = await import('../src/renderer/src/quality.ts')
-  const { suitableTests } = await import('../src/renderer/src/advisor.ts')
+  const { importCsvBytes } = await import('../src/io/csv.ts')
+  const { scanQuality } = await import('../src/quality.ts')
+  const { suitableTests } = await import('../src/advisor.ts')
 
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
   const csvBuffer = readFileSync(join(root, 'tests', 'dummy_testdata.csv'))
@@ -174,7 +174,7 @@ test('data health: issue grouping categorization separates scales, integrity, an
 })
 
 test('advisor: resetAiAdvisorCache clears cached recommendations on dataset close or new open', async () => {
-  const { cachedAiRec, resetAiAdvisorCache } = await import('../src/renderer/src/advisor.ts')
+  const { cachedAiRec, resetAiAdvisorCache } = await import('../src/advisor.ts')
 
   // Set mock recommendation in cache
   cachedAiRec.value = {

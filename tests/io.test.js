@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { importCsvBytes, serializeCsv } from '../src/main/io/csv.ts'
-import { importSavBytes } from '../src/main/io/savRead.ts'
-import { writeSav } from '../src/main/io/savWrite.ts'
-import { exportXlsx, importXlsxBytes } from '../src/main/io/xlsx.ts'
-import { readArchive, writeArchive } from '../src/main/io/archive.ts'
-import { defaultMeta } from '../src/main/io/types.ts'
+import { importCsvBytes, serializeCsv } from '../src/io/csv.ts'
+import { importSavBytes } from '../src/io/savRead.ts'
+import { writeSav } from '../src/io/savWrite.ts'
+import { exportXlsx, importXlsxBytes } from '../src/io/xlsx.ts'
+import { readArchive, writeArchive } from '../src/io/archive.ts'
+import { defaultMeta } from '../src/io/types.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixture = (name) => readFileSync(join(root, 'tests', 'fixtures', 'io', name))

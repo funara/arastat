@@ -1,8 +1,8 @@
 // CSV export must neutralize spreadsheet formula injection (OWASP).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { serializeCsv } from '../src/main/io/csv.ts'
-import { datasetFromRows } from '../src/main/io/types.ts'
+import { serializeCsv } from '../src/io/csv.ts'
+import { datasetFromRows } from '../src/io/types.ts'
 
 test('csv export escapes leading formula characters and leaves normal data alone', () => {
   const ds = datasetFromRows(['name'], [['=CMD|/C calc'], ['+1'], ['@SUM(A1)'], ['\tTAB'], ['plain', 'plain']])

@@ -1,7 +1,7 @@
 // computeFill / rowsWithMissing: fill math, tie + all-missing no-ops, drop union.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeFill, rowsWithMissing, interpolateValues } from '../src/renderer/src/missing.ts'
+import { computeFill, rowsWithMissing, interpolateValues } from '../src/missing.ts'
 
 const isNull = (v) => v === null
 

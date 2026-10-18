@@ -4,7 +4,57 @@ import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SeamClient } from '../src/main/seamClient.ts'
+/**
+ * Minimal NDJSON-RPC 2.0 stdio client: one UTF-8 JSON object per line.
+ * Inlined here so the golden-reference tests have no dependency on host code.
+ */
+class SeamClient {
+  #stdin
+  #pending = new Map()
+  #nextId = 1
+  #buf = ''
+
+  constructor(stdin, stdout, onNotification) {
+    this.#stdin = stdin
+    stdout.setEncoding('utf8')
+    stdout.on('data', (chunk) => {
+      this.#buf += chunk
+      let nl
+      while ((nl = this.#buf.indexOf('\n')) >= 0) {
+        const line = this.#buf.slice(0, nl)
+        this.#buf = this.#buf.slice(nl + 1)
+        if (line.trim()) this.#dispatch(JSON.parse(line), onNotification)
+      }
+    })
+    stdout.on('close', () => {
+      for (const { reject } of this.#pending.values()) reject(new Error('engine stream closed'))
+      this.#pending.clear()
+    })
+  }
+
+  #dispatch(msg, onNotification) {
+    if (typeof msg.method === 'string') return onNotification({ method: msg.method, params: msg.params })
+    const pending = this.#pending.get(msg.id)
+    if (!pending) return
+    this.#pending.delete(msg.id)
+    if (msg.error) {
+      const err = new Error(msg.error.message ?? 'engine error')
+      err.code = msg.error.code ?? -1
+      err.data = msg.error.data
+      pending.reject(err)
+    } else {
+      pending.resolve(msg.result)
+    }
+  }
+
+  invoke(method, params) {
+    const id = this.#nextId++
+    const { promise, resolve, reject } = Promise.withResolvers()
+    this.#pending.set(id, { resolve, reject })
+    this.#stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+    return promise
+  }
+}
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixturesRoot = join(root, 'tests', 'fixtures')
@@ -39,7 +89,7 @@ const ANALYSIS_IDS = [
 const REL = 1e-9
 const ABS = 1e-12
 
-/** Spawn the REAL Python engine child exactly like src/main/index.ts does. */
+/** Spawn the REAL Python engine child exactly like the Tauri host's `engine.rs` does. */
 function startEngine() {
   const venvPython = join(root, 'engine', '.venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python')
   const interpreter = existsSync(venvPython) ? venvPython : 'python3.12'

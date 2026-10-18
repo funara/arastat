@@ -1,7 +1,7 @@
 // splitTrailingProse + splitLeadingBullet: jammed bullets split naturally.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { splitLeadingBullet, splitTrailingProse } from '../src/renderer/src/aiText.ts'
+import { splitLeadingBullet, splitTrailingProse } from '../src/aiText.ts'
 
 const COLS = ['emp_name', 'department', 'join_date', 'city', 'remote_work', 'salary', 'age', 'performance_rating']
 

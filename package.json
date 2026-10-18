@@ -9,30 +9,29 @@
   "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "shell": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "dev:vite": "vite",
+    "build:vite": "vite build",
     "test": "node --test \"tests/*.test.js\"",
-    "typecheck": "vue-tsc --noEmit",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "electron-updater": "^6.6.2",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.3",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-updater": "^2.14.0",
     "exceljs": "4.4.0",
     "jsavvy": "0.0.6",
     "plotly.js-dist-min": "^3.7.0",
     "vue": "3.5.43"
   },
   "devDependencies": {
-    "@swc/core": "1.16.2",
+    "@tauri-apps/cli": "^2.12.3",
     "@types/node": "24.13.6",
     "@vitejs/plugin-vue": "6.0.9",
-    "electron": "44.4.5",
-    "electron-builder": "^26.15.3",
-    "electron-vite": "5.0.0",
     "typescript": "5.9.3",
     "vite": "7.3.6",
     "vue-tsc": "3.3.11"
