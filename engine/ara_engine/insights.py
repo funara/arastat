@@ -361,6 +361,42 @@ def render_chart_svg(chart, data: dict) -> tuple[str, str]:
     return svg, fr["title"]
 
 
+def render_scree_svg(labels: list, eigenvalues: list) -> str:
+    """Scree plot: one bar per component plus the Kaiser λ = 1 threshold line.
+
+    Called straight from the factor-analysis pipeline rather than the AI chart
+    spec path, so the caller gets the SVG alone.
+    """
+    values = [fnum(v) or 0.0 for v in eigenvalues]
+    ml, mt = 52, 30
+    pw, ph = 480 - ml - 12, 320 - mt - 44
+    top = max([*values, 1.0])
+    bot = min([*values, 0.0])
+    if top == bot:
+        top = bot + 1.0
+    sy = _scale(bot, top, mt + ph, mt)
+    band = pw / max(len(values), 1)
+    bw = band * 0.6
+    bars = []
+    for i, value in enumerate(values):
+        xx = ml + band * i + (band - bw) / 2
+        yy = sy(value if value >= 0 else 0)
+        hh = abs(sy(value) - sy(0))
+        bars.append(
+            f'<rect x="{xx:.1f}" y="{yy:.1f}" width="{bw:.1f}" height="{max(hh, 1):.1f}"'
+            ' fill="#2563eb" opacity="0.8"/>'
+        )
+    line = sy(1.0)
+    body = "".join(bars) + (
+        f'<line x1="{ml}" y1="{line:.1f}" x2="{ml + pw}" y2="{line:.1f}"'
+        ' stroke="#dc2626" stroke-dasharray="5 3" stroke-width="1.5"/>'
+        f'<text x="{ml + pw - 4}" y="{line - 5:.1f}" text-anchor="end" font-size="9"'
+        ' font-family="sans-serif" fill="#dc2626">Kaiser λ = 1.0</text>'
+    )
+    yt = [_fmt_tick(v) for v in reversed(_ticks(bot, top))]
+    return _svg_shell("Scree Plot", body, [str(label) for label in labels], yt)
+
+
 # --- diagnose: missing summary + assumption + serial tests --------------------
 
 

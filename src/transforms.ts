@@ -303,3 +303,45 @@ export function computeWinsorizeValues(
   }
   return { values: out, error: null, lo, hi, changed }
 }
+
+export interface RecodeRule {
+  /** Matched with the cell's string form, so 1 and '1' are one rule. */
+  from: string
+  to: string
+}
+
+export interface RecodeCompute {
+  values: Cell[]
+  error: string | null
+  changed: number
+}
+
+/**
+ * Recode cell values through an old → new table (SPSS Recode into Different
+ * Variables). Unmatched cells pass through untouched; a blank `to` means the
+ * code becomes missing. `numericOut` writes numbers where the new text parses
+ * as one, so a numeric column stays numeric.
+ */
+export function computeRecodeValues(
+  vals: Cell[],
+  isMissing: (v: Cell) => boolean,
+  rules: RecodeRule[],
+  numericOut: boolean
+): RecodeCompute {
+  const usable = rules.filter((r) => r.from.trim() !== '')
+  if (!usable.length) return { values: vals.map(() => null), error: 'Add at least one old → new rule.', changed: 0 }
+  const map = new Map<string, string>()
+  for (const r of usable) map.set(r.from.trim(), r.to.trim())
+  const out: Cell[] = vals.map((v) => v ?? null)
+  let changed = 0
+  for (let i = 0; i < out.length; i++) {
+    const v = out[i]
+    if (isMissing(v)) continue
+    const key = String(v)
+    if (!map.has(key)) continue
+    const to = map.get(key) as string
+    out[i] = to === '' ? null : numericOut && Number.isFinite(Number(to)) ? Number(to) : to
+    changed++
+  }
+  return { values: out, error: null, changed }
+}

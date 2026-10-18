@@ -17,10 +17,12 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 import pandas as pd
 import scipy
+import scipy.linalg
 import scipy.stats
 import statsmodels
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
+from statsmodels.multivariate.factor_rotation import rotate_factors
 from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.contingency_tables import mcnemar
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
@@ -227,6 +229,72 @@ FACTORIAL_ROWS = [
     ("S22", "Treatment", "High", 23),
     ("S23", "Treatment", "High", 21),
     ("S24", "Treatment", "High", 22),
+]
+
+# 30 respondents on a 6-item Likert scale (1-5). Each row is one latent
+# response plus a literal +/-1 wobble, so alpha lands in the high .80s-.90s
+# range where a scale reliability report is actually believable.
+RELIABILITY_ROWS = [
+    (3, 3, 4, 2, 3, 3),
+    (5, 4, 4, 5, 3, 4),
+    (1, 2, 2, 2, 3, 1),
+    (5, 4, 5, 5, 5, 5),
+    (4, 4, 3, 2, 4, 3),
+    (4, 4, 3, 4, 4, 5),
+    (1, 1, 1, 2, 1, 1),
+    (4, 3, 3, 2, 3, 3),
+    (4, 5, 3, 4, 5, 3),
+    (5, 5, 5, 5, 4, 5),
+    (1, 2, 2, 3, 2, 3),
+    (3, 4, 3, 3, 3, 2),
+    (5, 3, 5, 4, 5, 4),
+    (3, 3, 3, 4, 2, 2),
+    (5, 5, 4, 5, 5, 5),
+    (1, 3, 2, 2, 3, 2),
+    (4, 3, 5, 5, 4, 3),
+    (4, 3, 3, 2, 3, 4),
+    (1, 1, 2, 1, 1, 1),
+    (4, 5, 4, 5, 3, 3),
+    (5, 5, 5, 5, 5, 5),
+    (3, 2, 4, 2, 3, 4),
+    (1, 3, 2, 3, 2, 1),
+    (5, 4, 3, 4, 5, 5),
+    (3, 4, 3, 2, 2, 3),
+    (5, 5, 5, 5, 5, 4),
+    (1, 2, 2, 3, 2, 3),
+    (4, 5, 3, 4, 5, 4),
+    (4, 3, 3, 4, 3, 2),
+    (2, 1, 3, 2, 3, 2),
+]
+
+# 24 respondents on 8 items forming two correlated clusters: f1-f4 (approach
+# items) load on the first factor, f5-f8 (avoidance items) on the second, with
+# the two factors negatively related.
+EFA_ROWS = [
+    (5, 4, 4, 5, 3, 3, 4, 4),
+    (4, 4, 5, 4, 5, 5, 4, 5),
+    (3, 4, 4, 4, 4, 4, 5, 5),
+    (3, 4, 3, 3, 4, 3, 4, 3),
+    (2, 3, 3, 3, 4, 4, 4, 5),
+    (4, 4, 4, 3, 4, 3, 3, 3),
+    (3, 3, 3, 3, 2, 2, 2, 3),
+    (5, 4, 4, 5, 5, 4, 5, 4),
+    (3, 3, 3, 4, 4, 3, 3, 3),
+    (3, 3, 3, 2, 2, 2, 3, 2),
+    (3, 3, 3, 3, 4, 4, 5, 3),
+    (2, 1, 2, 2, 3, 3, 4, 4),
+    (3, 3, 3, 3, 2, 3, 3, 2),
+    (3, 2, 3, 3, 4, 4, 4, 4),
+    (3, 4, 3, 4, 3, 4, 4, 4),
+    (2, 2, 2, 1, 1, 1, 2, 2),
+    (3, 3, 3, 3, 3, 2, 2, 2),
+    (3, 3, 4, 3, 4, 5, 4, 4),
+    (2, 3, 2, 2, 3, 3, 2, 3),
+    (5, 5, 4, 5, 3, 3, 3, 3),
+    (4, 4, 3, 4, 5, 5, 5, 5),
+    (5, 5, 5, 5, 5, 5, 5, 4),
+    (2, 3, 3, 3, 3, 3, 3, 1),
+    (4, 4, 3, 4, 4, 5, 4, 5),
 ]
 
 LOGIT_ROWS = [
@@ -686,6 +754,177 @@ def fixture_logistic_regression() -> None:
     )
 
 
+def psychometric_corr(values: np.ndarray) -> np.ndarray:
+    return np.corrcoef(values, rowvar=False)
+
+
+def paf_loadings(corr: np.ndarray, factors: int) -> np.ndarray:
+    """Iterated principal-axis loadings (mirrors the engine's fixed point).
+
+    statsmodels' own `Factor` runs the same iteration to a looser stop, so it
+    agrees only to ~1e-8; the fixtures are compared at 1e-9 and must therefore
+    reuse the engine's 1e-12 convergence rule.
+    """
+    h = np.clip(1.0 - 1.0 / np.diag(np.linalg.inv(corr)), 1e-6, 1.0)
+    loadings = np.zeros((corr.shape[0], factors))
+    for _ in range(1000):
+        reduced = corr.copy()
+        np.fill_diagonal(reduced, h)
+        values, vectors = scipy.linalg.eigh(reduced)
+        order = np.argsort(values)[::-1]
+        loadings = vectors[:, order[:factors]] * np.sqrt(np.maximum(values[order[:factors]], 0.0))
+        updated = np.sum(loadings**2, axis=1)
+        converged = float(np.max(np.abs(updated - h))) < 1e-12
+        h = updated
+        if converged:
+            break
+    return loadings
+
+
+def varimax_loadings(loadings: np.ndarray) -> np.ndarray:
+    """Kaiser-normalized varimax + per-column sign canonicalization."""
+    norms = np.sqrt(np.sum(loadings**2, axis=1))
+    norms[norms == 0.0] = 1.0
+    rotated, _ = rotate_factors(loadings / norms[:, None], "varimax")
+    rotated = rotated * norms[:, None]
+    for column in range(rotated.shape[1]):
+        if rotated[int(np.argmax(np.abs(rotated[:, column]))), column] < 0.0:
+            rotated[:, column] = -rotated[:, column]
+    return rotated
+
+
+def fixture_reliability_cronbach() -> None:
+    header = ["respondent", "q1", "q2", "q3", "q4", "q5", "q6"]
+    values = np.asarray(RELIABILITY_ROWS, dtype=float)
+    rows = [(f"R{i:02d}", *row) for i, row in enumerate(RELIABILITY_ROWS, start=1)]
+    n, items = values.shape
+    item_var = np.var(values, axis=0, ddof=1)
+    totals = np.sum(values, axis=1)
+    total_var = float(np.var(totals, ddof=1))
+    alpha = items / (items - 1) * (1.0 - float(item_var.sum()) / total_var)
+    df1 = n - 1
+    df2 = (n - 1) * (items - 1)
+    lower = 1.0 - (1.0 - alpha) * scipy.stats.f.ppf(0.975, df1, df2)
+    upper = 1.0 - (1.0 - alpha) / scipy.stats.f.ppf(0.975, df2, df1)
+    corr = psychometric_corr(values)
+    rbar = float((np.sum(corr) - items) / (items * (items - 1)))
+    loadings = paf_loadings(corr, 1)
+    common = float(np.sum(loadings) ** 2)
+    items_out = []
+    for i, name in enumerate(header[1:]):
+        rest = totals - values[:, i]
+        rest_var = float(np.var(rest, ddof=1))
+        items_out.append(
+            {
+                "name": name,
+                "itemMean": float(np.mean(values[:, i])),
+                "itemSd": float(np.std(values[:, i], ddof=1)),
+                "scaleMeanIfDeleted": float(np.mean(rest)),
+                "scaleVarianceIfDeleted": rest_var,
+                "correctedItemTotal": float(scipy.stats.pearsonr(values[:, i], rest).statistic),
+                "alphaIfDeleted": (items - 1) / (items - 2)
+                * (1.0 - float(item_var.sum() - item_var[i]) / rest_var)
+                if rest_var > 0.0
+                else None,
+            }
+        )
+    write_fixture(
+        "reliability_cronbach",
+        header,
+        rows,
+        {
+            "alpha": alpha,
+            "ciLower": lower,
+            "ciUpper": upper,
+            "standardizedAlpha": items * rbar / (1.0 + (items - 1) * rbar),
+            "omega": common / (common + float(np.sum(1.0 - loadings**2))),
+            "scaleMean": float(np.mean(totals)),
+            "scaleVariance": total_var,
+            "scaleSd": float(np.std(totals, ddof=1)),
+            "n": n,
+            "k": items,
+            "items": items_out,
+        },
+        "numpy.var(items, ddof=1) for alpha; scipy.stats.f.ppf(0.975, n-1, (n-1)(k-1)) for the Feldt CI; "
+        "scipy.stats.pearsonr(item, rest) for each corrected item-total r",
+        "Six 1-5 Likert items on 30 complete cases. Alpha uses the item/total variance form; "
+        "the interval is Feldt's (1965) F-based 95% CI; omega_t comes from a one-factor "
+        "principal-axis solution. Item-total rows drop the item from the scale total.",
+    )
+
+
+def fixture_factor_efa() -> None:
+    header = ["respondent", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"]
+    values = np.asarray(EFA_ROWS, dtype=float)
+    rows = [(f"E{i:02d}", *row) for i, row in enumerate(EFA_ROWS, start=1)]
+    n, k = values.shape
+    corr = psychometric_corr(values)
+    values_eig, vectors = scipy.linalg.eigh(corr)
+    order = np.argsort(values_eig)[::-1]
+    eigenvalues = values_eig[order]
+    vectors = vectors[:, order]
+    anti_image = np.linalg.inv(corr)
+    target = np.diag(1.0 / np.sqrt(np.diag(anti_image)))
+    partial = -(target @ anti_image @ target)
+    np.fill_diagonal(partial, 0.0)
+    off_corr = corr.copy()
+    np.fill_diagonal(off_corr, 0.0)
+    corr_sq = np.sum(off_corr**2, axis=1)
+    partial_sq = np.sum(partial**2, axis=1)
+    msa = corr_sq / (corr_sq + partial_sq)
+    chi2 = -(n - 1 - (2 * k + 5) / 6.0) * math.log(float(np.linalg.det(corr)))
+    bartlett_df = k * (k - 1) // 2
+    factors = int(np.sum(eigenvalues > 1.0))
+    loadings = varimax_loadings(vectors[:, :factors] * np.sqrt(eigenvalues[:factors]))
+    communalities = np.sum(loadings**2, axis=1)
+    cumulative = 0.0
+    explained = []
+    for value in eigenvalues:
+        cumulative += float(value)
+        explained.append(
+            {
+                "eigenvalue": float(value),
+                "percent": float(value) / k * 100.0,
+                "cumulative": cumulative / k * 100.0,
+            }
+        )
+    write_fixture(
+        "factor_efa",
+        header,
+        rows,
+        {
+            "n": n,
+            "k": k,
+            "method": "pca",
+            "rotation": "varimax",
+            "nFactors": factors,
+            "kmo": float(corr_sq.sum() / (corr_sq.sum() + partial_sq.sum())),
+            "msa": {name: float(value) for name, value in zip(header[1:], msa, strict=True)},
+            "bartlett": {
+                "chi2": chi2,
+                "df": bartlett_df,
+                "p": float(scipy.stats.chi2.sf(chi2, bartlett_df)),
+            },
+            "eigenvalues": [float(v) for v in eigenvalues],
+            "explained": explained,
+            "loadings": [
+                {
+                    "name": name,
+                    "loadings": [float(v) for v in loadings[i]],
+                    "communality": float(communalities[i]),
+                    "uniqueness": float(1.0 - communalities[i]),
+                }
+                for i, name in enumerate(header[1:])
+            ],
+        },
+        "numpy.linalg.inv(corr) for KMO/MSA; scipy.stats.chi2.sf(chi2, k(k-1)/2) for Bartlett; "
+        "scipy.linalg.eigh(corr) for eigenvalues; statsmodels.multivariate.factor_rotation.rotate_factors(L, 'varimax')",
+        "Eight items on 24 complete cases. Kaiser's rule retains every eigenvalue above 1.0, "
+        "PCA extraction scales the leading eigenvectors by sqrt(lambda), and the loadings are "
+        "varimax-rotated with each column's largest loading made positive.",
+    )
+
+
 def main() -> None:
     FIXTURE_ROOT.mkdir(parents=True, exist_ok=True)
     fixture_chisq_gof()
@@ -699,7 +938,9 @@ def main() -> None:
     fixture_tukey_hsd()
     fixture_factorial_anova_2way()
     fixture_logistic_regression()
-    print("generated 11 Tier-2 fixtures")
+    fixture_reliability_cronbach()
+    fixture_factor_efa()
+    print("generated 13 Tier-2 fixtures")
     print("versions:", json.dumps(VERSIONS, sort_keys=True))
 
 

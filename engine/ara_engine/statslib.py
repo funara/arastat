@@ -1,4 +1,4 @@
-"""The 23 analysis handlers.
+"""The 25 analysis handlers.
 
 Each handler reproduces the fixture's provenance call exactly and returns the
 golden stats dict (expected.json minus provenance/notes). Extraction
@@ -13,9 +13,11 @@ import math
 
 import numpy as np
 import pandas as pd
+import scipy.linalg as sla
 import scipy.stats as st
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
+from statsmodels.multivariate.factor_rotation import rotate_factors
 from statsmodels.stats.anova import anova_lm
 from statsmodels.stats.contingency_tables import mcnemar
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
@@ -776,6 +778,254 @@ def run_spearman_correlation(spec, cols):
     return {"n": int(first.size), "rho": f(result.statistic), "p": f(result.pvalue)}
 
 
+def _complete_matrix(cols, names: list[str]) -> np.ndarray:
+    """Listwise matrix of the named columns; rows missing anywhere are dropped.
+
+    Reliability and factor analysis both build one shared covariance structure,
+    so pairwise deletion would leave a matrix that need not be positive
+    definite — a variable dropping out is a data error, not a silent subset.
+    """
+    values = [np.asarray(numeric(cols[name], name), dtype=float) for name in names]
+    matrix = np.column_stack(values) if values else np.empty((0, 0))
+    if matrix.size == 0:
+        return matrix
+    return matrix[np.isfinite(matrix).all(axis=1)]
+
+
+def _eigh_desc(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Symmetric eigen-decomposition ordered largest eigenvalue first."""
+    values, vectors = sla.eigh(matrix)
+    order = np.argsort(values)[::-1]
+    return values[order], vectors[:, order]
+
+
+def _paf_loadings(corr: np.ndarray, factors: int) -> np.ndarray:
+    """Iterated principal-axis loadings, started from SMC communalities.
+
+    Iterates to a 1e-12 fixed point: the golden fixtures compare the last
+    digits, so a looser stop would make them depend on the iteration budget.
+    """
+    smc = 1.0 - 1.0 / np.diag(np.linalg.inv(corr))
+    communalities = np.clip(smc, 1e-6, 1.0)
+    loadings = np.zeros((corr.shape[0], factors))
+    for _ in range(1000):
+        reduced = corr.copy()
+        np.fill_diagonal(reduced, communalities)
+        values, vectors = _eigh_desc(reduced)
+        loadings = vectors[:, :factors] * np.sqrt(np.maximum(values[:factors], 0.0))
+        updated = np.sum(loadings**2, axis=1)
+        converged = float(np.max(np.abs(updated - communalities))) < 1e-12
+        communalities = updated
+        if converged:
+            break
+    return loadings
+
+
+def _varimax(loadings: np.ndarray) -> np.ndarray:
+    """Kaiser-normalized varimax, then one canonical sign per column.
+
+    An eigenvector's sign is arbitrary and the rotation inherits that freedom;
+    making each column's largest loading positive is what pins the golden
+    fixture to one of the two mirror solutions.
+    """
+    norms = np.sqrt(np.sum(loadings**2, axis=1))
+    norms[norms == 0.0] = 1.0
+    rotated, _ = rotate_factors(loadings / norms[:, None], "varimax")
+    rotated = rotated * norms[:, None]
+    for column in range(rotated.shape[1]):
+        if rotated[int(np.argmax(np.abs(rotated[:, column]))), column] < 0.0:
+            rotated[:, column] = -rotated[:, column]
+    return rotated
+
+
+def run_reliability_cronbach(spec, cols):
+    names = list(spec["vars"])
+    items = len(names)
+    if items < 2:
+        raise NumericError(
+            f"Reliability needs at least two items. Choose two or more variables.",
+            f"k = {items}",
+        )
+    matrix = _complete_matrix(cols, names)
+    n = int(matrix.shape[0])
+    if n < 3:
+        raise NumericError(
+            "Reliability needs at least three complete rows across every item. "
+            "Add rows or remove items with missing values.",
+            f"n = {n}, k = {items}",
+        )
+    item_var = np.var(matrix, axis=0, ddof=1)
+    zero_variance = [names[i] for i in range(items) if item_var[i] == 0.0]
+    if zero_variance:
+        raise NumericError(
+            f"Item “{zero_variance[0]}” has no variance, so alpha is undefined. "
+            "Remove the constant item or add varying responses.",
+            f"zero-variance items: {zero_variance}",
+        )
+    totals = np.sum(matrix, axis=1)
+    total_var = float(np.var(totals, ddof=1))
+    if total_var == 0.0:
+        raise NumericError(
+            "The summed scale has no variance, so alpha is undefined. Check the item values.",
+            "scale variance is zero",
+        )
+    alpha = items / (items - 1) * (1.0 - float(item_var.sum()) / total_var)
+    # Feldt (1965): (1 - alpha_hat) / (1 - alpha) ~ F(n-1, (n-1)(k-1)).
+    df1 = n - 1
+    df2 = (n - 1) * (items - 1)
+    lower = 1.0 - (1.0 - alpha) * st.f.ppf(0.975, df1, df2)
+    upper = 1.0 - (1.0 - alpha) / st.f.ppf(0.975, df2, df1)
+    corr = np.corrcoef(matrix, rowvar=False)
+    # Omega needs the inverse correlation matrix, so it fails on duplicated or
+    # linearly-dependent items the same way factor analysis does.
+    if float(np.linalg.eigvalsh(corr).min()) <= 1e-10:
+        raise NumericError(
+            "The item correlations are linearly dependent, so omega is undefined. "
+            "Remove duplicated or perfectly correlated items.",
+            "correlation matrix is singular",
+        )
+    rbar = float((np.sum(corr) - items) / (items * (items - 1)))
+    standardized = items * rbar / (1.0 + (items - 1) * rbar)
+    loadings = _paf_loadings(corr, 1)
+    common = float(np.sum(loadings) ** 2)
+    omega = common / (common + float(np.sum(1.0 - loadings**2)))
+    item_total = []
+    for i, name in enumerate(names):
+        rest = totals - matrix[:, i]
+        rest_var = float(np.var(rest, ddof=1))
+        rest_var_of_remaining = float(item_var.sum() - item_var[i])
+        # With k = 2 the deleted scale is a single item, which has no alpha.
+        alpha_deleted = (
+            (items - 1) / (items - 2) * (1.0 - rest_var_of_remaining / rest_var)
+            if items > 2 and rest_var > 0.0
+            else None
+        )
+        item_total.append(
+            {
+                "name": name,
+                "itemMean": f(np.mean(matrix[:, i])),
+                "itemSd": f(np.std(matrix[:, i], ddof=1)),
+                "scaleMeanIfDeleted": f(np.mean(rest)),
+                "scaleVarianceIfDeleted": f(rest_var),
+                "correctedItemTotal": f(st.pearsonr(matrix[:, i], rest).statistic),
+                "alphaIfDeleted": f(alpha_deleted),
+            }
+        )
+    return {
+        "alpha": f(alpha),
+        "ciLower": f(lower),
+        "ciUpper": f(upper),
+        "standardizedAlpha": f(standardized),
+        "omega": f(omega),
+        "scaleMean": f(np.mean(totals)),
+        "scaleVariance": f(total_var),
+        "scaleSd": f(np.std(totals, ddof=1)),
+        "n": n,
+        "k": items,
+        "items": item_total,
+    }
+
+
+def run_factor_efa(spec, cols):
+    names = list(spec["vars"])
+    requested = int(float(spec["nFactors"]))
+    k = len(names)
+    if k < 3:
+        raise NumericError(
+            "Factor analysis needs at least three variables. Choose three or more variables.",
+            f"k = {k}",
+        )
+    if requested > 0 and requested >= k:
+        raise NumericError(
+            f"Factor analysis cannot extract {requested} factors from {k} variables. "
+            f"Set the number of factors below {k}, or use 0 for the Kaiser criterion.",
+            f"nFactors = {requested}, k = {k}",
+        )
+    matrix = _complete_matrix(cols, names)
+    n = int(matrix.shape[0])
+    if n < 3:
+        raise NumericError(
+            "Factor analysis needs at least three complete rows across every variable. "
+            "Add rows or remove variables with missing values.",
+            f"n = {n}, k = {k}",
+        )
+    corr = np.corrcoef(matrix, rowvar=False)
+    values, vectors = _eigh_desc(corr)
+    if float(values.min()) <= 1e-10:
+        raise NumericError(
+            "The correlation matrix is singular, so factor analysis is undefined. "
+            "Remove variables that are constant or duplicated.",
+            f"smallest eigenvalue = {float(values.min())!r}",
+        )
+    anti_image = np.linalg.inv(corr)
+    target = np.diag(1.0 / np.sqrt(np.diag(anti_image)))
+    partial = -(target @ anti_image @ target)
+    np.fill_diagonal(partial, 0.0)
+    off_corr = corr.copy()
+    np.fill_diagonal(off_corr, 0.0)
+    corr_sq = np.sum(off_corr**2, axis=1)
+    partial_sq = np.sum(partial**2, axis=1)
+    msa = corr_sq / (corr_sq + partial_sq)
+    kmo = float(corr_sq.sum() / (corr_sq.sum() + partial_sq.sum()))
+    chi2 = -(n - 1 - (2 * k + 5) / 6.0) * math.log(float(np.linalg.det(corr)))
+    bartlett_df = k * (k - 1) // 2
+    factors = int(np.sum(values > 1.0)) if requested == 0 else requested
+    if factors < 1:
+        raise NumericError(
+            "No eigenvalue exceeds 1.0, so the Kaiser criterion retains no factor. "
+            "Set a fixed number of factors above 0.",
+            f"largest eigenvalue = {float(values[0])!r}",
+        )
+    if spec["method"] == "paf":
+        loadings = _paf_loadings(corr, factors)
+    else:
+        loadings = vectors[:, :factors] * np.sqrt(values[:factors])
+    if spec["rotation"] == "varimax" and factors > 1:
+        loadings = _varimax(loadings)
+    else:
+        loadings = loadings.copy()
+        for column in range(factors):
+            if loadings[int(np.argmax(np.abs(loadings[:, column]))), column] < 0.0:
+                loadings[:, column] = -loadings[:, column]
+    communalities = np.sum(loadings**2, axis=1)
+    explained = []
+    cumulative = 0.0
+    for value in values:
+        cumulative += float(value)
+        explained.append(
+            {
+                "eigenvalue": f(value),
+                "percent": f(float(value) / k * 100.0),
+                "cumulative": f(cumulative / k * 100.0),
+            }
+        )
+    return {
+        "n": n,
+        "k": k,
+        "method": spec["method"],
+        "rotation": spec["rotation"],
+        "nFactors": factors,
+        "kmo": f(kmo),
+        "msa": {name: f(value) for name, value in zip(names, msa)},
+        "bartlett": {
+            "chi2": f(chi2),
+            "df": bartlett_df,
+            "p": f(st.chi2.sf(chi2, bartlett_df)),
+        },
+        "eigenvalues": [f(value) for value in values],
+        "explained": explained,
+        "loadings": [
+            {
+                "name": name,
+                "loadings": [f(value) for value in loadings[i]],
+                "communality": f(communalities[i]),
+                "uniqueness": f(1.0 - communalities[i]),
+            }
+            for i, name in enumerate(names)
+        ],
+    }
+
+
 HANDLERS = {
     "shapiro_wilk": run_shapiro_wilk,
     "spearman_correlation": run_spearman_correlation,
@@ -785,6 +1035,7 @@ HANDLERS = {
     "chisq_independence": run_chisq_independence,
     "correlation": run_correlation,
     "descriptives": run_descriptives,
+    "factor_efa": run_factor_efa,
     "factorial_anova_2way": run_factorial_anova_2way,
     "fisher_exact_2x2": run_fisher_exact_2x2,
     "frequencies": run_frequencies,
@@ -795,6 +1046,7 @@ HANDLERS = {
     "logistic_regression": run_logistic_regression,
     "mannwhitney_u": run_mannwhitney_u,
     "mcnemar": run_mcnemar,
+    "reliability_cronbach": run_reliability_cronbach,
     "ttest_independent": run_ttest_independent,
     "ttest_onesample": run_ttest_onesample,
     "ttest_paired": run_ttest_paired,

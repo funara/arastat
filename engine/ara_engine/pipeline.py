@@ -10,7 +10,7 @@ import numpy as np
 
 from .registry import ANALYSES, SpecError, TITLES, validate_spec
 from .statslib import HANDLERS, DataError, NumericError, is_missing
-from .insights import ChartError, render_chart_svg
+from .insights import ChartError, render_chart_svg, render_scree_svg
 
 MISSING_POLICIES = ("listwise", "pairwise")
 
@@ -545,6 +545,167 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
                 ["Term", "Coef", "SE", "z", "p", "Odds ratio"],
                 rows,
                 [f"Note. n = {stats['n']}, McFadden pseudo R² = {stats['mcfadden_pseudo_r2']:.3f}."],
+            )
+        )
+    elif analysis_id == "reliability_cronbach":
+        alpha = stats["alpha"]
+        out.append(
+            _table(
+                f"{base}/table/1",
+                "Reliability Statistics",
+                ["α", "95% CI", "Standardized α", "McDonald’s ω_t", "N of Items", "Valid N"],
+                [
+                    [
+                        alpha,
+                        f"[{stats['ciLower']}, {stats['ciUpper']}]",
+                        stats["standardizedAlpha"],
+                        stats["omega"],
+                        stats["k"],
+                        stats["n"],
+                    ]
+                ],
+                [
+                    "Note. α is Cronbach’s coefficient alpha; the interval is Feldt’s (1965) exact "
+                    "F-based 95% CI. ω_t is McDonald’s total omega from a single-factor solution."
+                ],
+            )
+        )
+        item_rows = [
+            [
+                s["name"],
+                s["itemMean"],
+                s["itemSd"],
+                s["scaleMeanIfDeleted"],
+                s["scaleVarianceIfDeleted"],
+                s["correctedItemTotal"],
+                s["alphaIfDeleted"],
+            ]
+            for s in stats["items"]
+        ]
+        flagged = [
+            s["name"]
+            for s in stats["items"]
+            if (s["correctedItemTotal"] is not None and s["correctedItemTotal"] < 0.30)
+            or (s["alphaIfDeleted"] is not None and alpha is not None and s["alphaIfDeleted"] > alpha)
+        ]
+        footnotes = [
+            "Note. Corrected item-total r correlates the item with the sum of the remaining items."
+        ]
+        if flagged:
+            footnotes.append(
+                "Flagged (r_it < .30 or α if deleted > α): " + ", ".join(flagged) + "."
+            )
+        out.append(
+            _table(
+                f"{base}/table/2",
+                "Item-Total Statistics",
+                [
+                    "Item",
+                    "Item M",
+                    "Item SD",
+                    "Scale M if deleted",
+                    "Scale Var if deleted",
+                    "Corrected r_it",
+                    "α if deleted",
+                ],
+                item_rows,
+                footnotes,
+            )
+        )
+        out.append(
+            _note(
+                f"{base}/note/1",
+                f"Scale reliability for {stats['k']} items on {stats['n']} complete cases: "
+                f"α = {alpha:.3f}, 95% CI [{stats['ciLower']:.3f}, {stats['ciUpper']:.3f}], "
+                f"standardized α = {stats['standardizedAlpha']:.3f}, ω_t = {stats['omega']:.3f}. "
+                f"The summed scale scores average {stats['scaleMean']:.2f} "
+                f"(SD = {stats['scaleSd']:.2f}). "
+                + (
+                    "Items flagged above are candidates for revision: a low corrected item-total "
+                    "correlation or a higher alpha after deletion means the item adds noise."
+                    if flagged
+                    else "No item is flagged: every corrected item-total correlation reaches .30 "
+                    "and no deletion raises alpha."
+                ),
+            )
+        )
+    elif analysis_id == "factor_efa":
+        bar = stats["bartlett"]
+        out.append(
+            _table(
+                f"{base}/table/1",
+                "KMO and Bartlett’s Test",
+                ["Statistic", "Value"],
+                [
+                    ["Kaiser-Meyer-Olkin measure", stats["kmo"]],
+                    ["Bartlett χ²", bar["chi2"]],
+                    ["Bartlett df", bar["df"]],
+                    ["Bartlett p", bar["p"]],
+                ],
+                [
+                    "Note. KMO below .50 means the correlation matrix is barely factorable. "
+                    "Bartlett’s test of sphericity asks whether the matrix differs from an identity matrix."
+                ],
+            )
+        )
+        out.append(
+            _table(
+                f"{base}/table/2",
+                "Total Variance Explained",
+                ["Component", "Eigenvalue", "% of variance", "Cumulative %"],
+                [
+                    [i, row["eigenvalue"], row["percent"], row["cumulative"]]
+                    for i, row in enumerate(stats["explained"], start=1)
+                ],
+                [
+                    f"Note. Extraction method: {'principal axis factoring' if stats['method'] == 'paf' else 'principal component analysis'}. "
+                    f"{stats['nFactors']} factor(s) retained from {stats['k']} variables."
+                ],
+            )
+        )
+        factor_columns = [f"F{i + 1}" for i in range(stats["nFactors"])]
+        out.append(
+            _table(
+                f"{base}/table/3",
+                "Rotated Factor Loadings & Communalities",
+                ["Variable", *factor_columns, "h²", "u²"],
+                [
+                    [row["name"], *row["loadings"], row["communality"], row["uniqueness"]]
+                    for row in stats["loadings"]
+                ],
+                [
+                    "Note. "
+                    + (
+                        "Varimax rotation; loadings are pattern coefficients."
+                        if stats["rotation"] == "varimax"
+                        else "Unrotated loadings."
+                    )
+                    + " h² is the explained communality, u² the unique variance."
+                ],
+            )
+        )
+        scree = {
+            "op": "upsert",
+            "address": f"{base}/chart/1",
+            "element": {
+                "address": f"{base}/chart/1",
+                "status": "ok",
+                "kind": "chart",
+                "caption": "Scree Plot",
+                "svg": render_scree_svg(
+                    [str(i) for i in range(1, stats["k"] + 1)], stats["eigenvalues"]
+                ),
+            },
+        }
+        out.append(scree)
+        out.append(
+            _note(
+                f"{base}/note/1",
+                f"KMO = {stats['kmo']:.3f} on {stats['k']} variables and {stats['n']} complete cases; "
+                f"Bartlett χ²({bar['df']}) = {bar['chi2']:.3f}, p = {_fmt_p(bar['p'])}. "
+                f"{stats['nFactors']} factor(s) retained, explaining "
+                f"{stats['explained'][stats['nFactors'] - 1]['cumulative']:.1f}% of the total variance. "
+                "Variables whose largest loading sits on the same factor belong to the same construct.",
             )
         )
     return out

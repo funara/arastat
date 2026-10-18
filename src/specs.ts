@@ -46,6 +46,27 @@ const ALT = ['two-sided', 'less', 'greater']
 
 export const SCHEMAS: AnalysisSchema[] = [
   {
+    id: 'factor_efa',
+    title: 'Exploratory Factor Analysis (EFA / PCA)',
+    description: 'Reduces a set of correlated items to a smaller number of latent factors, reporting sampling adequacy, eigenvalues, and rotated loadings.',
+    howTo: 'Select three or more continuous (Scale) items to factor-analyze. Leave Number of factors at 0 to keep every eigenvalue above 1 (Kaiser), and pick Varimax rotation for a cleaner simple structure.',
+    options: [
+      vl('vars', 'Variables (choose three or more)', SCALE, 'Continuous items to factor-analyze (Scale, e.g., q1, q2, q3, q4)', { min: 3 }),
+      n('nFactors', 'Number of factors', '0 keeps every factor with eigenvalue above 1 (Kaiser criterion)', { default: 0, min: 0 }),
+      e('method', 'Extraction method', ['pca', 'paf'], 'pca', 'PCA analyzes total variance; principal axis factoring (PAF) analyzes shared variance only'),
+      e('rotation', 'Rotation', ['varimax', 'none'], 'varimax', 'Varimax is an orthogonal rotation that sharpens which items load on which factor')
+    ]
+  },
+  {
+    id: 'reliability_cronbach',
+    title: "Scale Reliability Analysis (Cronbach’s Alpha & McDonald’s Omega)",
+    description: "Quantifies the internal consistency of a multi-item scale with Cronbach's alpha, its confidence interval, McDonald's omega, and item-total diagnostics.",
+    howTo: 'Select two or more continuous (Scale) items that are meant to measure one construct (e.g., q1, q2, q3). Review the alpha-if-item-deleted column to spot an item that hurts the scale.',
+    options: [
+      vl('vars', 'Items (choose two or more)', SCALE, 'Continuous items forming the scale (Scale, e.g., q1, q2, q3)', { min: 2 })
+    ]
+  },
+  {
     id: 'descriptives',
     title: 'Descriptive statistics',
     description: 'Summarizes the central tendency, dispersion, and distribution shapes of numeric variables.',

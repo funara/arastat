@@ -59,7 +59,7 @@ class SeamClient {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const fixturesRoot = join(root, 'tests', 'fixtures')
 
-/** The 23 D2(c) analyses (fixture directory names), alphabetical. */
+/** The 25 D2(c) analyses (fixture directory names), alphabetical. */
 const ANALYSIS_IDS = [
   'anova_oneway',
   'binomial',
@@ -67,6 +67,7 @@ const ANALYSIS_IDS = [
   'chisq_independence',
   'correlation',
   'descriptives',
+  'factor_efa',
   'factorial_anova_2way',
   'fisher_exact_2x2',
   'frequencies',
@@ -77,6 +78,7 @@ const ANALYSIS_IDS = [
   'logistic_regression',
   'mannwhitney_u',
   'mcnemar',
+  'reliability_cronbach',
   'ttest_independent',
   'ttest_onesample',
   'ttest_paired',
@@ -242,7 +244,7 @@ async function runFixture(id) {
 
 // --- tests -------------------------------------------------------------------
 
-test('fixture dirs cover exactly the 23 registered analyses (no skips)', () => {
+test('fixture dirs cover exactly the 25 registered analyses (no skips)', () => {
   const found = []
   for (const tier of ['tier1', 'tier2']) {
     for (const name of readdirSync(join(fixturesRoot, tier))) {

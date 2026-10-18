@@ -214,6 +214,30 @@ export function applyNotification(note: { method: string; params: unknown }): vo
   }
 }
 
+/**
+ * Pin a rendered chart as its own result card (Visualize dialog → results pane).
+ * Goes straight onto the run list: `startRun` would also take over the global
+ * loading line and clobber an engine run that is still streaming.
+ */
+export function pinChartElement(caption: string, svg: string): string {
+  const runId = newRunId()
+  runsState.runs.push({
+    runId,
+    analysisId: 'visualize',
+    title: caption,
+    spec: {},
+    missingPolicy: '',
+    status: 'done',
+    elements: [{ address: `${runId}/chart/1`, status: 'ok', kind: 'chart', caption, svg }],
+    lastSeq: 0,
+    fresh: true,
+    createdAt: Date.now(),
+    startTime: Date.now(),
+    revealed: true
+  })
+  return runId
+}
+
 /** Serializable snapshot for the project archive (opaque result tree slot). */
 export function snapshotRuns(): unknown {
   return {

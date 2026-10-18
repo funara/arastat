@@ -46,7 +46,7 @@ export const ADVISOR_TESTS: Record<AdvisorPatternId, string[]> = {
   'paired-scale': ['ttest_paired', 'wilcoxon_signedrank', 'correlation'],
   'scale-2group': ['ttest_independent', 'mannwhitney_u'],
   'scale-multigroup': ['anova_oneway', 'welch_anova', 'kruskal_wallis'],
-  'scale-predictors': ['linear_regression', 'correlation', 'kendall_tau'],
+  'scale-predictors': ['linear_regression', 'correlation', 'kendall_tau', 'reliability_cronbach', 'factor_efa'],
   'group-group': ['chisq_independence', 'chisq_gof', 'frequencies'],
   'ord-group': ['mannwhitney_u', 'kruskal_wallis', 'descriptives']
 }
@@ -56,7 +56,7 @@ export const ADVISOR_NOTES: Record<AdvisorPatternId, string> = {
   'paired-scale': 'Compares two repeated continuous measurements on the same subjects (e.g. pre/post scores) or assesses linear correlation between two continuous columns.',
   'scale-2group': 'Compares a continuous metric across two independent groups (e.g. treated vs control). Assesses normality and variance equality to guide between Independent t-test and Mann-Whitney U.',
   'scale-multigroup': 'Compares continuous outcomes across 3 or more independent groups (One-Way ANOVA). Employs Welch ANOVA if group variances are unequal, followed by Tukey HSD post-hoc pairwise tests.',
-  'scale-predictors': 'Models how a continuous outcome is explained by one or more predictor columns using Multiple Linear Regression, evaluating model fit (R²), coefficients, and residual assumptions.',
+  'scale-predictors': 'Models how a continuous outcome is explained by one or more predictor columns using Multiple Linear Regression, evaluating model fit (R²), coefficients, and residual assumptions. When the selected columns are items of one instrument, Scale Reliability and Factor Analysis report how well they hang together.',
   'group-group': 'Evaluates contingency tables and independence between two categorical factors using Pearson Chi-Square test or Fisher Exact test for sparse frequency counts.',
   'ord-group': 'Compares ordinal rating scales or ranks across independent groups using non-parametric rank sums (Mann-Whitney U or Kruskal-Wallis).'
 }

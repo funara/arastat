@@ -12,6 +12,7 @@ const emit = defineEmits<{
   (e: 'export-html'): void
   (e: 'copy-text'): void
   (e: 'copy-run', run: Run): void
+  (e: 'copy-apa', run: Run): void
   (e: 'fix-options', run: Run): void
   (e: 'explain-run', run: Run): void
   (e: 'close'): void
@@ -32,6 +33,24 @@ function toggleMinimize(run: Run): void {
   minimized.value = next
 }
 
+// "Copied!" flash: the parent owns the clipboard write, so it calls back into
+// markApaCopied (exposed below) to arm the 1.5s checkmark on this button.
+const copiedRuns = ref(new Set<string>())
+function isApaCopied(run: Run): boolean {
+  return copiedRuns.value.has(run.runId)
+}
+function markApaCopied(run: Run): void {
+  const next = new Set(copiedRuns.value)
+  next.add(run.runId)
+  copiedRuns.value = next
+  window.setTimeout(() => {
+    const cleared = new Set(copiedRuns.value)
+    cleared.delete(run.runId)
+    copiedRuns.value = cleared
+  }, 1500)
+}
+defineExpose({ markApaCopied })
+
 // Track runs where explanation was requested to hide the button
 const explainedRuns = ref(new Set<string>())
 function isExplained(run: Run): boolean {
@@ -45,6 +64,9 @@ function onExplain(run: Run): void {
 }
 
 function desc(run: Run): string {
+  // A pinned chart (Visualize → Pin to Results) has no spec and no missing
+  // policy, so it describes itself rather than claiming "missing handling".
+  if (!run.missingPolicy) return specSummary(run.spec) || 'Pinned from the Visualize dialog.'
   return `${specSummary(run.spec)} (${run.missingPolicy} missing handling).`
 }
 
@@ -107,6 +129,16 @@ function noteTail(el: ResultElement): string {
         <div class="result-head-row">
           <h3 class="result-title">{{ run.title }}</h3>
           <div class="result-head-actions">
+            <button
+              class="icon-chip"
+              type="button"
+              :title="isApaCopied(run) ? 'Copied!' : 'Copy APA table'"
+              :aria-label="isApaCopied(run) ? 'Copied!' : 'Copy APA table'"
+              @click.stop="$emit('copy-apa', run)"
+            >
+              <svg v-if="isApaCopied(run)" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
             <button
               class="icon-chip"
               type="button"

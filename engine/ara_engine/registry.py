@@ -1,4 +1,4 @@
-"""Analysis registry: the 23 analyses of D2(c) and their option schemas.
+"""Analysis registry: the 25 analyses of D2(c) and their option schemas.
 
 Keys of ``ANALYSES`` are the fixture directory names and are listed in
 alphabetical order; ``capabilities.analyses`` reports exactly this order.
@@ -29,6 +29,12 @@ ANALYSES: dict[str, dict[str, tuple]] = {
     "chisq_independence": {"col": ("str",), "row": ("str",)},
     "correlation": {"variables": ("str_list",)},
     "descriptives": {"variables": ("str_list",)},
+    "factor_efa": {
+        "method": ("enum", ("pca", "paf")),
+        "nFactors": ("num",),
+        "rotation": ("enum", ("varimax", "none")),
+        "vars": ("str_list",),
+    },
     "factorial_anova_2way": {
         "coding": ("enum", ("sum-to-zero", "treatment")),
         "dep": ("str",),
@@ -58,6 +64,7 @@ ANALYSES: dict[str, dict[str, tuple]] = {
     },
     "mannwhitney_u": {"dep": ("str",), "group": ("str",)},
     "mcnemar": {"after": ("str",), "before": ("str",), "count": ("str",)},
+    "reliability_cronbach": {"vars": ("str_list",)},
     "shapiro_wilk": {"dep": ("str",)},
     "spearman_correlation": {"a": ("str",), "b": ("str",)},
     "ttest_independent": {"dep": ("str",), "group": ("str",)},
@@ -86,6 +93,7 @@ TITLES = {
     "chisq_independence": "Chi-square test of independence",
     "correlation": "Correlation matrix",
     "descriptives": "Descriptive statistics",
+    "factor_efa": "Exploratory Factor Analysis (EFA / PCA)",
     "factorial_anova_2way": "Two-way factorial ANOVA",
     "fisher_exact_2x2": "Fisher’s exact test (2x2)",
     "frequencies": "Frequency tables",
@@ -96,6 +104,7 @@ TITLES = {
     "logistic_regression": "Logistic regression",
     "mannwhitney_u": "Mann-Whitney U test",
     "mcnemar": "McNemar’s test",
+    "reliability_cronbach": "Scale Reliability Analysis (Cronbach’s Alpha & McDonald’s Omega)",
     "shapiro_wilk": "Shapiro-Wilk normality test",
     "spearman_correlation": "Spearman rank correlation",
     "ttest_independent": "Independent-samples t-test",

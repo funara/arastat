@@ -225,7 +225,11 @@ onUnmounted(() => {
           <div class="update-eyebrow"><span aria-hidden="true">✦</span> ARASTAT</div>
           <h3 id="update-modal-title">ARAStat was updated</h3>
         </div>
-        <button class="icon-close-btn" type="button" aria-label="Close" @click="close">&times;</button>
+        <button class="icon-close-btn" type="button" title="Close (Esc)" aria-label="Close" @click="close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
       <div class="modal-body">
         <p v-if="loading" class="update-empty">Loading changelog…</p>

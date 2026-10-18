@@ -60,6 +60,12 @@ function runRecommendedTest(testId: string): void {
     options['b'] = res.values[1]
     options['row'] = res.values[0]
     options['col'] = res.values[1]
+    options['variables'] = [...res.values]
+  } else if (res.values.length >= 3) {
+    options['vars'] = [...res.values]
+    options['variables'] = [...res.values]
+    options['dep'] = res.values[0]
+    options['predictors'] = res.values.slice(1)
   }
   if (res.group) {
     options['factor'] = res.group
@@ -123,7 +129,11 @@ onUnmounted(() => {
             <p class="modal-subtitle">Evaluate data properties, test assumptions, and match suitable inferential procedures.</p>
           </div>
         </div>
-        <button class="icon-close-btn" title="Close (Esc)" aria-label="Close" @click="close">&times;</button>
+        <button class="icon-close-btn" title="Close (Esc)" aria-label="Close" @click="close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
       <div class="modal-body test-advisor-body">

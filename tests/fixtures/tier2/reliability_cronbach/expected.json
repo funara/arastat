@@ -1,0 +1,76 @@
+{
+  "alpha": 0.9336453536649807,
+  "ciLower": 0.8886193057022708,
+  "ciUpper": 0.9645722905082896,
+  "items": [
+    {
+      "alphaIfDeleted": 0.9089636414543417,
+      "correctedItemTotal": 0.9008360226913715,
+      "itemMean": 3.3333333333333335,
+      "itemSd": 1.5161960871578068,
+      "name": "q1",
+      "scaleMeanIfDeleted": 16.566666666666666,
+      "scaleVarianceIfDeleted": 28.736781609195397
+    },
+    {
+      "alphaIfDeleted": 0.9247296727987642,
+      "correctedItemTotal": 0.777252377492677,
+      "itemMean": 3.3666666666666667,
+      "itemSd": 1.2726115785600325,
+      "name": "q2",
+      "scaleMeanIfDeleted": 16.533333333333335,
+      "scaleVarianceIfDeleted": 32.74022988505747
+    },
+    {
+      "alphaIfDeleted": 0.9243159455452219,
+      "correctedItemTotal": 0.789471083013949,
+      "itemMean": 3.3,
+      "itemSd": 1.1188047809743373,
+      "name": "q3",
+      "scaleMeanIfDeleted": 16.6,
+      "scaleVarianceIfDeleted": 34.11034482758621
+    },
+    {
+      "alphaIfDeleted": 0.9273627299536581,
+      "correctedItemTotal": 0.756576031403548,
+      "itemMean": 3.3666666666666667,
+      "itemSd": 1.2994251602637363,
+      "name": "q4",
+      "scaleMeanIfDeleted": 16.533333333333335,
+      "scaleVarianceIfDeleted": 32.74022988505747
+    },
+    {
+      "alphaIfDeleted": 0.919310295992069,
+      "correctedItemTotal": 0.822018111870675,
+      "itemMean": 3.3666666666666667,
+      "itemSd": 1.2452207485597395,
+      "name": "q5",
+      "scaleMeanIfDeleted": 16.533333333333335,
+      "scaleVarianceIfDeleted": 32.46436781609195
+    },
+    {
+      "alphaIfDeleted": 0.9221752222540867,
+      "correctedItemTotal": 0.7979052561046858,
+      "itemMean": 3.1666666666666665,
+      "itemSd": 1.3152509484776145,
+      "name": "q6",
+      "scaleMeanIfDeleted": 16.733333333333334,
+      "scaleVarianceIfDeleted": 32.06436781609195
+    }
+  ],
+  "k": 6,
+  "n": 30,
+  "notes": "Six 1-5 Likert items on 30 complete cases. Alpha uses the item/total variance form; the interval is Feldt's (1965) F-based 95% CI; omega_t comes from a one-factor principal-axis solution. Item-total rows drop the item from the scale total.",
+  "omega": 0.9351508793734967,
+  "provenance": {
+    "call": "numpy.var(items, ddof=1) for alpha; scipy.stats.f.ppf(0.975, n-1, (n-1)(k-1)) for the Feldt CI; scipy.stats.pearsonr(item, rest) for each corrected item-total r",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "scaleMean": 19.9,
+  "scaleSd": 6.7586470794699425,
+  "scaleVariance": 45.67931034482758,
+  "standardizedAlpha": 0.9344203308349663
+}

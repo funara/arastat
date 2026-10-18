@@ -8,6 +8,7 @@ import type { ColumnMeta } from './io/types.ts'
 import { storageShort } from './io/types.ts'
 import { scanQuality } from './quality.ts'
 import VariableConfigDialog from './VariableConfigDialog.vue'
+import MeasureIcon from './MeasureIcon.vue'
 
 const emit = defineEmits<{
   (e: 'plot', colName: string): void
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   (e: 'open-analysis', testId: string, options?: Record<string, unknown>): void
   (e: 'open-test-advisor', initialVars?: string[]): void
   (e: 'open-advisor', colName?: string): void
+  (e: 'jump-to-column', name: string): void
 }>()
 
 // Filtering
@@ -298,6 +300,14 @@ function openConfig(colName: string, tab: ConfigTab = 'general'): void {
   configDialogOpen.value = true
 }
 
+// Hub "Configure variable" deep-links land here by name, so an active filter
+// must never hide the target: openConfig() takes the name, not the row index.
+defineExpose({ openConfigFor: (name: string) => openConfig(name, 'general') })
+
+function jumpToColumn(colName: string): void {
+  emit('jump-to-column', colName)
+}
+
 function onPlotRequest(colName: string): void {
   emit('plot', colName)
 }
@@ -424,14 +434,20 @@ function onPlotRequest(colName: string): void {
             @dblclick="openConfig(c.name, 'general')"
             @contextmenu.prevent="openContextMenu($event, c.name)"
           >
-            <!-- Row Number: clean index with click to configure -->
-            <td class="cell-rownum" title="Click to configure variable" @click.stop="openConfig(c.name, 'general')">
+            <!-- Row Number: click configures, double-click jumps to Data View -->
+            <td
+              class="cell-rownum"
+              :title="`Click to configure ${c.name}, double-click to show it in Data View`"
+              @click.stop="openConfig(c.name, 'general')"
+              @dblclick.stop="jumpToColumn(c.name)"
+            >
               <span class="row-num-val">{{ i + 1 }}</span>
             </td>
 
             <!-- Variable Name: click to configure -->
             <td class="cell-var-name" :title="`${c.name} (Click to configure)`" @click="openConfig(c.name, 'general')">
               <div class="var-name-row">
+                <MeasureIcon :measure="c.measure" />
                 <span class="var-name-primary" :title="c.name">{{ c.name }}</span>
                 <button
                   v-if="hasQualityIssue(c.name)"

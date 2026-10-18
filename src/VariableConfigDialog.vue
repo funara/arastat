@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { state, rowCount, setMeta, isUserMissing, imputeColumn, mergeDirtyCategories, convertToNumeric } from './store.ts'
 import type { ColumnMeta, Measure, MissingRules, StorageType } from './io/types.ts'
 import { getStorageType, storageShort } from './io/types.ts'
@@ -539,6 +539,29 @@ function launchPlot(): void {
   emit('plot', props.colName)
   close()
 }
+
+// --- Roving tab focus over the four config tabs (ARIA tabs pattern) ----------
+const tablistEl = ref<HTMLElement | null>(null)
+const TAB_ORDER: ConfigTab[] = ['general', 'labels', 'missing', 'eda']
+
+function onTablistKeydown(ev: KeyboardEvent): void {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']
+  if (!keys.includes(ev.key)) return
+  ev.preventDefault()
+  const cur = TAB_ORDER.indexOf(activeTab.value)
+  const at = TAB_ORDER.length
+  const next =
+    ev.key === 'Home' ? 0
+      : ev.key === 'End' ? at - 1
+        : ev.key === 'ArrowRight' ? (cur + 1) % at
+          : (cur - 1 + at) % at
+  activeTab.value = TAB_ORDER[next]!
+  // Focus must follow the selection or the next arrow press lands on a stale
+  // button and the tablist appears dead to keyboard users.
+  void nextTick(() => {
+    tablistEl.value?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
+  })
+}
 </script>
 
 <template>
@@ -552,17 +575,28 @@ function launchPlot(): void {
           <span class="badge-type">{{ storageShort(currentColumn) }}</span>
           <span class="badge-measure">{{ currentColumn.measure.toUpperCase() }}</span>
         </div>
-        <button class="icon-close-btn" title="Close (Esc)" @click="close">&times;</button>
+        <button class="icon-close-btn" title="Close (Esc)" aria-label="Close" @click="close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
 
-      <!-- Tab Switcher -->
-      <div class="dialog-tabs" role="tablist" aria-label="Variable configuration tabs">
+      <!-- Tab Switcher: roving tabindex, arrows/Home/End move selection + focus -->
+      <div
+        ref="tablistEl"
+        class="dialog-tabs"
+        role="tablist"
+        aria-label="Variable configuration tabs"
+        @keydown="onTablistKeydown"
+      >
         <button
           class="dialog-tab-btn"
           :class="{ active: activeTab === 'general' }"
           type="button"
           role="tab"
           :aria-selected="activeTab === 'general'"
+          :tabindex="activeTab === 'general' ? 0 : -1"
           @click="activeTab = 'general'"
         >
           General &amp; Type
@@ -573,6 +607,7 @@ function launchPlot(): void {
           type="button"
           role="tab"
           :aria-selected="activeTab === 'labels'"
+          :tabindex="activeTab === 'labels' ? 0 : -1"
           @click="activeTab = 'labels'"
         >
           Value Labels ({{ labelRows.length }})
@@ -583,6 +618,7 @@ function launchPlot(): void {
           type="button"
           role="tab"
           :aria-selected="activeTab === 'missing'"
+          :tabindex="activeTab === 'missing' ? 0 : -1"
           @click="activeTab = 'missing'"
         >
           Missing Data ({{ missingStats.missing }})
@@ -593,6 +629,7 @@ function launchPlot(): void {
           type="button"
           role="tab"
           :aria-selected="activeTab === 'eda'"
+          :tabindex="activeTab === 'eda' ? 0 : -1"
           @click="activeTab = 'eda'"
         >
           Distribution &amp; EDA

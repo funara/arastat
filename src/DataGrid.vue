@@ -1,15 +1,48 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import {
   state, rowCount, setCell, addRowAt, deleteRow, deleteColumn, setMeta, batchCells,
   displayCell, isUserMissing, type Cell
 } from './store.ts'
 import type { ColumnMeta } from './io/types.ts'
 import { storageShort } from './io/types.ts'
+import MeasureIcon from './MeasureIcon.vue'
+
+const props = withDefaults(defineProps<{ highlightColumn?: string }>(), {
+  highlightColumn: '',
+})
 
 const emit = defineEmits<{
   (e: 'edit', row: number, col: string): void
+  (e: 'open-variable', name: string): void
 }>()
+
+/* ---------- Column header -> Variable View handoff ---------- */
+// SPSS parity: double-clicking a column header opens that variable for editing.
+// The reverse trip (Variable View -> Data View) arrives as `highlightColumn`;
+// we scroll it into the visible slice and flash it so the eye can find it.
+const flashCol = ref('')
+let flashTimer = 0
+
+function flashColumn(name: string): void {
+  if (!name) return
+  void nextTick(() => {
+    // Headers are never virtualized, so the cell is always in the DOM even
+    // when its data column is scrolled far off-screen.
+    const cell = Array.from(tableEl.value?.querySelectorAll<HTMLElement>('th[data-col]') ?? [])
+      .find((el) => el.dataset.col === name)
+    if (!cell) return
+    cell.scrollIntoView({ block: 'nearest', inline: 'center' })
+    flashCol.value = name
+    if (flashTimer) clearTimeout(flashTimer)
+    flashTimer = window.setTimeout(() => {
+      flashCol.value = ''
+      flashTimer = 0
+    }, 1200)
+  })
+}
+
+watch(() => props.highlightColumn, flashColumn)
 
 /* ---------- Right-click context menu (SPSS-style) ---------- */
 const ctxMenu = ref<{ x: number; y: number; row: number; col: string | null } | null>(null)
@@ -188,12 +221,16 @@ onMounted(() => {
       viewportH.value = scrollEl.value.clientHeight
       scrollEl.value.addEventListener('scroll', onGridScroll, { passive: true })
     }
+    // The handoff often flips the view and sets the prop in the same tick, so
+    // the watcher never sees a change on a freshly mounted grid.
+    flashColumn(props.highlightColumn)
   })
 })
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick)
   scrollEl.value?.removeEventListener('scroll', onGridScroll)
   if (scrollRaf) cancelAnimationFrame(scrollRaf)
+  if (flashTimer) clearTimeout(flashTimer)
 })
 </script>
 
@@ -203,8 +240,25 @@ onBeforeUnmount(() => {
     <thead>
       <tr>
         <th class="corner" scope="col"><span class="sr-only">Row</span></th>
-        <th v-for="c in state.ds.columns" :key="c.name" scope="col" :style="{ minWidth: Math.max(c.width || 0, 110) + 'px' }">
-          <span class="vname">{{ c.name }} <span class="dtype-badge">{{ storageShort(c) }}</span></span>
+        <th
+          v-for="c in state.ds.columns"
+          :key="c.name"
+          scope="col"
+          class="col-head"
+          :class="{ 'col-flash': flashCol === c.name }"
+          :data-col="c.name"
+          :style="{ minWidth: Math.max(c.width || 0, 110) + 'px' }"
+          tabindex="0"
+          :title="`Open ${c.name} in Variable View`"
+          @dblclick="emit('open-variable', c.name)"
+          @keydown.enter.prevent="emit('open-variable', c.name)"
+          @keydown.space.prevent="emit('open-variable', c.name)"
+        >
+          <span class="vname">
+            <MeasureIcon :measure="c.measure" />
+            <span class="vname-text">{{ c.name }}</span>
+            <span class="dtype-badge">{{ storageShort(c) }}</span>
+          </span>
         </th>
       </tr>
     </thead>
@@ -274,3 +328,24 @@ onBeforeUnmount(() => {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* Header is a double-click affordance, so it reads as clickable without
+   stealing the row-level keyboard focus ring used by the cells below. */
+.col-head { cursor: pointer; }
+.col-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vname-text { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+/* Transient arrival cue for "jump to column" from Variable View. */
+.col-flash { animation: col-flash 1.2s ease-out; }
+@keyframes col-flash {
+  0%, 45% {
+    background: var(--accent-soft);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  100% {
+    background: var(--panel-alt);
+    box-shadow: none;
+  }
+}
+</style>

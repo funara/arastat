@@ -524,6 +524,9 @@ function clearAllStaged(): void {
   stagedKeys.value.clear()
   stagedImputes.value = []
 }
+// Single source for the staged number so the step badge and the Commit button
+// can never disagree.
+const stagedCount = computed(() => stagedQuality.value.length + stagedImputes.value.length)
 
 // Review issue categories
 const scaleIssues = computed(() =>
@@ -838,8 +841,41 @@ watch(
             <p class="modal-subtitle">Quality audit, measurement scale validation, and missing value preparation.</p>
           </div>
         </div>
-        <button class="icon-close-btn" title="Close (Esc)" aria-label="Close" @click="close">&times;</button>
+        <button class="icon-close-btn" title="Close (Esc)" aria-label="Close" @click="close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
+
+      <!-- Workflow stepper: subheader position so the queue sizes are visible on
+           every step (Step 2 = staged, Step 3 = applied). Roving tabindex keeps
+           it reachable by Tab and arrow keys. -->
+      <nav class="ara-stepper dha-step-count" aria-label="Data health workflow" aria-live="polite" @keydown="stepKeyNav">
+        <template v-for="s in STEPS" :key="s.n">
+          <span
+            v-if="s.n > 1"
+            class="dha-connector"
+            :class="{ 'is-done': step >= s.n }"
+            aria-hidden="true"
+          ></span>
+          <button
+            type="button"
+            class="dha-dot"
+            :class="{ 'is-done': step > s.n, 'is-current': step === s.n }"
+            :tabindex="step === s.n ? 0 : -1"
+            :aria-current="step === s.n ? 'step' : undefined"
+            :aria-label="`Step ${s.n}: ${s.label}. ${s.hint}`"
+            :title="`${s.label} — ${s.hint}`"
+            @click="goStep(s.n)"
+          >
+            <span class="dha-dot-circle" aria-hidden="true">{{ step > s.n ? '✓' : s.n }}</span>
+            <span class="dha-dot-label">{{ s.label }}</span>
+            <span v-if="s.n === 2 && stagedCount > 0" class="dha-dot-badge">{{ stagedCount }}</span>
+            <span v-else-if="s.n === 3 && activeActionsCount > 0" class="dha-dot-badge">{{ activeActionsCount }}</span>
+          </button>
+        </template>
+      </nav>
 
       <div class="modal-body">
         <!-- STEP 1: AUDIT / DETECT -->
@@ -1640,28 +1676,6 @@ watch(
             Clear Staged
           </button>
         </div>
-        <nav class="dha-step-count" aria-label="Data health workflow" aria-live="polite" @keydown="stepKeyNav">
-          <template v-for="s in STEPS" :key="s.n">
-            <span
-              v-if="s.n > 1"
-              class="dha-connector"
-              :class="{ 'is-done': step >= s.n }"
-              aria-hidden="true"
-            ></span>
-            <button
-              type="button"
-              class="dha-dot"
-              :class="{ 'is-done': step > s.n, 'is-current': step === s.n }"
-              :aria-current="step === s.n ? 'step' : undefined"
-              :aria-label="`Step ${s.n}: ${s.label}. ${s.hint}`"
-              :title="`${s.label} — ${s.hint}`"
-              @click="goStep(s.n)"
-            >
-              <span class="dha-dot-circle" aria-hidden="true">{{ step > s.n ? '✓' : s.n }}</span>
-              <span class="dha-dot-label">{{ s.label }}</span>
-            </button>
-          </template>
-        </nav>
         <div class="modal-footer-right">
           <button v-if="step < 3" class="btn btn-primary" type="button" @click="goStep(step + 1)">{{ step === 1 ? 'Stage fixes →' : 'Review summary →' }}</button>
           <button
@@ -1670,7 +1684,7 @@ watch(
             type="button"
             @click="applyAllStaged"
           >
-            Commit &amp; Apply All ({{ stagedQuality.length + stagedImputes.length }})
+            Commit &amp; Apply All ({{ stagedCount }})
           </button>
           <button v-else class="btn btn-primary" type="button" @click="close">Done</button>
         </div>
@@ -1683,6 +1697,21 @@ watch(
 .dha-step-count {
   display: flex;
   align-items: center;
+  /* Subheader sits between header and scrolling body; never let it compress. */
+  flex-shrink: 0;
+}
+.dha-dot-badge {
+  flex-shrink: 0;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 16px;
 }
 .dha-dot {
   display: flex;

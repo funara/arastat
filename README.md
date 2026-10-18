@@ -22,7 +22,7 @@
 
 ## Overview
 
-**ARAStat** is an open-source, offline-first desktop statistical analysis software designed as a fast, accessible, and privacy-conscious alternative to traditional tools like SPSS, JASP, and Jamovi. Built with a Tauri v2 (Rust) host and a Vue 3 renderer backed by a verified native Python statistical engine, ARAStat combines spreadsheet data management with 23 statistical tests, publication-ready output tables, interactive Plotly visualizations, and an AI copilot (**ARA Assistant**).
+**ARAStat** is an open-source, offline-first desktop statistical analysis software designed as a fast, accessible, and privacy-conscious alternative to traditional tools like SPSS, JASP, and Jamovi. Built with a Tauri v2 (Rust) host and a Vue 3 renderer backed by a verified native Python statistical engine, ARAStat combines spreadsheet data management with 25 statistical tests, publication-ready output tables, interactive Plotly visualizations, and an AI copilot (**ARA Assistant**).
 
 ---
 
@@ -31,7 +31,7 @@
 - **Dual-View Spreadsheet Workspace**:
   - **Data View**: High-performance grid for data entry, row/column transformations, filtering, and sorting.
   - **Variable View**: SPSS-grade variable metadata definition (name, type, width, decimal places, value labels, user-missing sentinels, and measurement scales: Nominal, Ordinal, Scale).
-- **23 Native Statistical Analyses**:
+- **25 Native Statistical Analyses**:
   - Comprehensive parametric, non-parametric, regression, contingency, and post-hoc routines powered by SciPy, statsmodels, and NumPy.
 - **Data Health Scan & Smart Imputation Advisor**:
   - Automatically identifies data quality concerns (severe outliers, extreme sentinels, measure mismatches, high-missing columns, and category spelling variations).
@@ -52,7 +52,7 @@
 
 ## Supported Statistical Analyses
 
-ARAStat implements 23 statistical procedures with golden-reference fixture tests verifying exact mathematical alignment against R and SPSS outputs:
+ARAStat implements 25 statistical procedures with golden-reference fixture tests verifying exact mathematical alignment against R and SPSS outputs:
 
 | Category                         | Analyses Included                                                                                                                                                    |
 | :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,6 +61,7 @@ ARAStat implements 23 statistical procedures with golden-reference fixture tests
 | **Non-Parametric Tests**         | Mann-Whitney U, Wilcoxon Signed-Rank, Wilcoxon One-Sample, Kruskal-Wallis H, Friedman ANOVA                                                                          |
 | **Correlation & Association**    | Pearson & Spearman Correlation, Kendall's Tau-b, Chi-Square Test of Independence, Chi-Square Goodness of Fit, Fisher's Exact Test (2×2), McNemar Test, Binomial Test |
 | **Regression Modeling**          | Linear Regression (OLS), Binary Logistic Regression                                                                                                                  |
+| **Scale & Factor Analysis**      | Scale Reliability Analysis (Cronbach's Alpha & McDonald's Omega), Exploratory Factor Analysis (EFA / PCA)                                                            |
 | **Post-Hoc Tests**               | Tukey's Honestly Significant Difference (HSD)                                                                                                                        |
 
 ---
@@ -215,7 +216,7 @@ ARAStat separates presentation, orchestration, and statistical calculation into 
 │                Native Python Stats Engine              │
 │                  CPython 3.12 Subprocess               │
 │        NumPy, SciPy, statsmodels, pandas, patsy        │
-│  (23 golden-reference analyses + registered extras)    │
+│  (25 golden-reference analyses + registered extras)    │
 └────────────────────────────────────────────────────────┘
 ```
 

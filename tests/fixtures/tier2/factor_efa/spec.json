@@ -1,0 +1,19 @@
+{
+  "id": "factor_efa",
+  "missingPolicy": "listwise",
+  "options": {
+    "method": "pca",
+    "nFactors": 0,
+    "rotation": "varimax",
+    "vars": [
+      "f1",
+      "f2",
+      "f3",
+      "f4",
+      "f5",
+      "f6",
+      "f7",
+      "f8"
+    ]
+  }
+}

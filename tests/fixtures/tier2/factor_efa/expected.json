@@ -1,0 +1,157 @@
+{
+  "bartlett": {
+    "chi2": 139.44989633893206,
+    "df": 28,
+    "p": 9.474139545221001e-17
+  },
+  "eigenvalues": [
+    5.091788288249599,
+    1.5052636616521504,
+    0.36889959788394616,
+    0.30588780087987477,
+    0.26567748879288267,
+    0.20099412558045568,
+    0.1417681482777991,
+    0.11972088868328329
+  ],
+  "explained": [
+    {
+      "cumulative": 63.64735360311998,
+      "eigenvalue": 5.091788288249599,
+      "percent": 63.64735360311998
+    },
+    {
+      "cumulative": 82.46314937377186,
+      "eigenvalue": 1.5052636616521504,
+      "percent": 18.81579577065188
+    },
+    {
+      "cumulative": 87.07439434732119,
+      "eigenvalue": 0.36889959788394616,
+      "percent": 4.611244973549327
+    },
+    {
+      "cumulative": 90.89799185831961,
+      "eigenvalue": 0.30588780087987477,
+      "percent": 3.8235975109984346
+    },
+    {
+      "cumulative": 94.21896046823065,
+      "eigenvalue": 0.26567748879288267,
+      "percent": 3.3209686099110334
+    },
+    {
+      "cumulative": 96.73138703798635,
+      "eigenvalue": 0.20099412558045568,
+      "percent": 2.512426569755696
+    },
+    {
+      "cumulative": 98.50348889145883,
+      "eigenvalue": 0.1417681482777991,
+      "percent": 1.7721018534724888
+    },
+    {
+      "cumulative": 99.99999999999987,
+      "eigenvalue": 0.11972088868328329,
+      "percent": 1.4965111085410412
+    }
+  ],
+  "k": 8,
+  "kmo": 0.8771570222149593,
+  "loadings": [
+    {
+      "communality": 0.8642686188925623,
+      "loadings": [
+        0.9097779135617076,
+        0.19124007657357922
+      ],
+      "name": "f1",
+      "uniqueness": 0.13573138110743765
+    },
+    {
+      "communality": 0.832379230731621,
+      "loadings": [
+        0.8977543842064264,
+        0.1625309089673752
+      ],
+      "name": "f2",
+      "uniqueness": 0.167620769268379
+    },
+    {
+      "communality": 0.7779011976150153,
+      "loadings": [
+        0.820878293745731,
+        0.3225833605009916
+      ],
+      "name": "f3",
+      "uniqueness": 0.2220988023849847
+    },
+    {
+      "communality": 0.8628780945665008,
+      "loadings": [
+        0.8473238264324968,
+        0.38068415744064366
+      ],
+      "name": "f4",
+      "uniqueness": 0.13712190543349922
+    },
+    {
+      "communality": 0.817559781385984,
+      "loadings": [
+        0.37130867021635344,
+        0.8244329280227393
+      ],
+      "name": "f5",
+      "uniqueness": 0.18244021861401605
+    },
+    {
+      "communality": 0.8827777895093254,
+      "loadings": [
+        0.2730324176872115,
+        0.8990167342164447
+      ],
+      "name": "f6",
+      "uniqueness": 0.1172222104906746
+    },
+    {
+      "communality": 0.7967358235654091,
+      "loadings": [
+        0.24604521661943637,
+        0.858019565595158
+      ],
+      "name": "f7",
+      "uniqueness": 0.20326417643459094
+    },
+    {
+      "communality": 0.7625514136353324,
+      "loadings": [
+        0.14300528612877905,
+        0.8614527855747861
+      ],
+      "name": "f8",
+      "uniqueness": 0.2374485863646676
+    }
+  ],
+  "method": "pca",
+  "msa": {
+    "f1": 0.8290392663187405,
+    "f2": 0.8855255204500045,
+    "f3": 0.9156598190785089,
+    "f4": 0.8777436095183001,
+    "f5": 0.904747627828739,
+    "f6": 0.8204350023049028,
+    "f7": 0.9096232002600274,
+    "f8": 0.8921014079375594
+  },
+  "n": 24,
+  "nFactors": 2,
+  "notes": "Eight items on 24 complete cases. Kaiser's rule retains every eigenvalue above 1.0, PCA extraction scales the leading eigenvectors by sqrt(lambda), and the loadings are varimax-rotated with each column's largest loading made positive.",
+  "provenance": {
+    "call": "numpy.linalg.inv(corr) for KMO/MSA; scipy.stats.chi2.sf(chi2, k(k-1)/2) for Bartlett; scipy.linalg.eigh(corr) for eigenvalues; statsmodels.multivariate.factor_rotation.rotate_factors(L, 'varimax')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "rotation": "varimax"
+}
