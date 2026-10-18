@@ -1,0 +1,19 @@
+{
+  "alternative": "two-sided",
+  "correction": false,
+  "method": "exact",
+  "mu": 50,
+  "n": 10,
+  "n_observations": 12,
+  "notes": "The one-sample comparison is score minus mu. zero_method='wilcox' removes the two zero differences, so n is the ten nonzero differences; tied absolute differences are retained in SciPy's exact result.",
+  "p": 0.130859375,
+  "provenance": {
+    "call": "scipy.stats.wilcoxon(x=x, y=mu_values, zero_method='wilcox', correction=False, alternative='two-sided', method='exact')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "statistic": 12.0,
+  "zero_method": "wilcox"
+}

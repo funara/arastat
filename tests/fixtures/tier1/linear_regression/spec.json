@@ -1,0 +1,11 @@
+{
+  "id": "linear_regression",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "final_score",
+    "predictors": [
+      "study_hours",
+      "attendance_pct"
+    ]
+  }
+}

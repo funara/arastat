@@ -1,0 +1,66 @@
+{
+  "nMatrix": [
+    [
+      8,
+      7,
+      8
+    ],
+    [
+      7,
+      7,
+      7
+    ],
+    [
+      8,
+      7,
+      8
+    ]
+  ],
+  "notes": "Pearson correlations are computed pairwise after finite-value filtering. One wellbeing cell is missing; diagonal r=1 and p=0 are reported by convention, with each diagonal n equal to that variable's valid count.",
+  "pMatrix": [
+    [
+      0.0,
+      2.6690309517245435e-05,
+      2.0096879597571946e-06
+    ],
+    [
+      2.6690309517245435e-05,
+      0.0,
+      4.3294731105867655e-05
+    ],
+    [
+      2.0096879597571946e-06,
+      4.3294731105867655e-05,
+      0.0
+    ]
+  ],
+  "provenance": {
+    "call": "scipy.stats.pearsonr(x=x_pair, y=y_pair) for each off-diagonal pair after pairwise finite-value filtering",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "rMatrix": [
+    [
+      1.0,
+      -0.9885652640189311,
+      -0.9906801321840802
+    ],
+    [
+      -0.9885652640189311,
+      1.0,
+      0.9861168645694258
+    ],
+    [
+      -0.9906801321840802,
+      0.9861168645694258,
+      1.0
+    ]
+  ],
+  "variables": [
+    "stress",
+    "wellbeing",
+    "sleep_hours"
+  ]
+}

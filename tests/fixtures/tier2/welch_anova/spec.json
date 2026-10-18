@@ -1,0 +1,9 @@
+{
+  "id": "welch_anova",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "response_score",
+    "factor": "group",
+    "useVar": "unequal"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "chisq_independence",
+  "missingPolicy": "listwise",
+  "options": {
+    "col": "response",
+    "row": "region"
+  }
+}

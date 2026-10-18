@@ -1,0 +1,32 @@
+{
+  "F": 84.57142857142857,
+  "df1": 2,
+  "df2": 15,
+  "etaSquared": 0.9185415050426686,
+  "groups": {
+    "Control": {
+      "mean": 63.5,
+      "n": 6,
+      "sd": 1.8708286933869707
+    },
+    "Intensive": {
+      "mean": 77.5,
+      "n": 6,
+      "sd": 1.8708286933869707
+    },
+    "Workshop": {
+      "mean": 69.5,
+      "n": 6,
+      "sd": 1.8708286933869707
+    }
+  },
+  "notes": "One-way fixed-effect ANOVA uses scipy.stats.f_oneway. etaSquared is ssBetween/ssTotal, where ssBetween=sum(n_g*(mean_g-grandMean)^2) and ssTotal=sum((x-grandMean)^2). Group SDs use ddof=1.",
+  "p": 6.7923938935938596e-09,
+  "provenance": {
+    "call": "scipy.stats.f_oneway(*groups)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  }
+}

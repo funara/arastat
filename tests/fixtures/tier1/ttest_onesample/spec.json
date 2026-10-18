@@ -1,0 +1,8 @@
+{
+  "id": "ttest_onesample",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "satisfaction_score",
+    "testValue": 70
+  }
+}

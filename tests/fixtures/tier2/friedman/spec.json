@@ -1,0 +1,11 @@
+{
+  "id": "friedman",
+  "missingPolicy": "listwise",
+  "options": {
+    "conditions": [
+      "condition_a",
+      "condition_b",
+      "condition_c"
+    ]
+  }
+}

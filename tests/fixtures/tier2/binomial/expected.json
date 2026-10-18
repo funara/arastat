@@ -1,0 +1,20 @@
+{
+  "alternative": "two-sided",
+  "ci_95": {
+    "lower": 0.5087051245215517,
+    "upper": 0.8142710332366502
+  },
+  "k": 27,
+  "n": 40,
+  "notes": "The estimate is k/n. The interval is the exact 95% Clopper-Pearson interval for the success proportion under the two-sided binomial test.",
+  "p": 0.03847730828420026,
+  "p0": 0.5,
+  "proportion": 0.675,
+  "provenance": {
+    "call": "scipy.stats.binomtest(k=k, n=n, p=p0, alternative='two-sided').proportion_ci(confidence_level=0.95, method='exact')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  }
+}

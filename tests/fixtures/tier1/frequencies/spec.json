@@ -1,0 +1,9 @@
+{
+  "id": "frequencies",
+  "missingPolicy": "listwise",
+  "options": {
+    "variables": [
+      "segment"
+    ]
+  }
+}

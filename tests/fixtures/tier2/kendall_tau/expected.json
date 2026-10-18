@@ -1,0 +1,16 @@
+{
+  "alternative": "two-sided",
+  "method": "auto",
+  "n": 20,
+  "notes": "Both ordinal-like columns contain ties. variant='b' is Kendall tau-b; method='auto' selects the asymptotic calculation when ties prevent the exact method.",
+  "p": 2.436040843024163e-08,
+  "provenance": {
+    "call": "scipy.stats.kendalltau(x=x, y=y, variant='b', method='auto', alternative='two-sided')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "tau": 0.9470788831585737,
+  "variant": "b"
+}

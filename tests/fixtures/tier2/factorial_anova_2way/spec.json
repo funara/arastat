@@ -1,0 +1,12 @@
+{
+  "id": "factorial_anova_2way",
+  "missingPolicy": "listwise",
+  "options": {
+    "coding": "sum-to-zero",
+    "dep": "score",
+    "factors": [
+      "A",
+      "B"
+    ]
+  }
+}

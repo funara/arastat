@@ -1,0 +1,6 @@
+name,note,score
+"a,comma","he said ""hi""",1
+"line
+break",plain,NA
+,,.
+"tab	inside","""lead and trail"" ",2.5

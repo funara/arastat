@@ -1,0 +1,14 @@
+{
+  "method": "approx",
+  "nUsed": 9,
+  "notes": "The input contains tied nonzero absolute differences and one zero difference. zero_method='wilcox' removes the zero difference; method='approx' is explicit because ties and a zero prevent an exact signed-rank distribution in this fixture.",
+  "p": 0.006905841264069989,
+  "provenance": {
+    "call": "scipy.stats.wilcoxon(x=first, y=second, zero_method='wilcox', correction=False, alternative='two-sided', method='approx')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "statistic": 0.0
+}

@@ -1,0 +1,31 @@
+{
+  "a": 20,
+  "b": 7,
+  "c": 13,
+  "chi2": 1.8,
+  "chi2_p": 0.17971249487899593,
+  "correction": false,
+  "d": 10,
+  "exact": true,
+  "exact_p": 0.26317596435546875,
+  "exact_statistic": 7.0,
+  "n": 50,
+  "notes": "Both discordant cells are at least 5. exact=True is the two-sided exact binomial variant; exact=False with correction=False is the uncorrected asymptotic chi-square variant.",
+  "provenance": {
+    "call": "statsmodels.stats.contingency_tables.mcnemar(table=table, exact=True); statsmodels.stats.contingency_tables.mcnemar(table=table, exact=False, correction=False)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "table": [
+    [
+      20,
+      7
+    ],
+    [
+      13,
+      10
+    ]
+  ]
+}

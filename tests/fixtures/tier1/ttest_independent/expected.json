@@ -1,0 +1,42 @@
+{
+  "cohensD": -3.9486173462831795,
+  "groups": {
+    "Control": {
+      "mean": 66.875,
+      "n": 8,
+      "sd": 3.1367635732209265
+    },
+    "Workshop": {
+      "mean": 78.375,
+      "n": 8,
+      "sd": 2.669269563007828
+    }
+  },
+  "notes": "Group order is Control minus Workshop for meanDiff and t. Welch uses equal_var=False; Student uses equal_var=True. SD is sample SD (ddof=1), pooledSd is the conventional pooled sample SD, and Cohen's d is meanDiff/pooledSd.",
+  "pooledSd": 2.9124118625535877,
+  "provenance": {
+    "call": "scipy.stats.ttest_ind(a=first, b=second, equal_var=False, alternative='two-sided'); scipy.stats.ttest_ind(a=first, b=second, equal_var=True, alternative='two-sided'); result.confidence_interval(confidence_level=0.95)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "student": {
+    "SE": 1.4562059312767939,
+    "ciLower": -14.623251096269415,
+    "ciUpper": -8.376748903730585,
+    "df": 14.0,
+    "meanDiff": -11.5,
+    "p": 1.5913632406939239e-06,
+    "t": -7.897234692566359
+  },
+  "welch": {
+    "SE": 1.4562059312767939,
+    "ciLower": -14.630768892319173,
+    "ciUpper": -8.369231107680827,
+    "df": 13.650546021840878,
+    "meanDiff": -11.5,
+    "p": 1.8770845058424742e-06,
+    "t": -7.897234692566359
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "chisq_gof",
+  "missingPolicy": "listwise",
+  "options": {
+    "expectedProportions": "equal",
+    "variable": "region"
+  }
+}

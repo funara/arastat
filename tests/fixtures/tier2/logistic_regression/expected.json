@@ -1,0 +1,50 @@
+{
+  "converged": true,
+  "llf": -28.45307684068904,
+  "llnull": -33.650583355036076,
+  "mcfadden_pseudo_r2": 0.15445516826587757,
+  "n": 50,
+  "notes": "Binary outcome is modeled with statsmodels Logit and an intercept, continuous engagement, and binary remote predictor. Convergence is verified from result.mle_retvals['converged']; odds-ratio intervals exponentiate result.conf_int(alpha=0.05).",
+  "provenance": {
+    "call": "statsmodels.api.Logit(endog=outcomes, exog=X).fit(method='newton', maxiter=100, disp=False); result.conf_int(alpha=0.05)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "terms": {
+    "const": {
+      "SE": 1.062413385935072,
+      "coef": -2.574379349670604,
+      "odds_ratio": 0.07620110236433637,
+      "odds_ratio_ci_95": {
+        "lower": 0.009498025702179447,
+        "upper": 0.6113489459401724
+      },
+      "p": 0.015386876818917638,
+      "z": -2.4231428027469657
+    },
+    "engagement": {
+      "SE": 0.025066562950024716,
+      "coef": 0.07188155999224151,
+      "odds_ratio": 1.074528069413879,
+      "odds_ratio_ci_95": {
+        "lower": 1.0230128002903423,
+        "upper": 1.1286374634126055
+      },
+      "p": 0.00413562405189438,
+      "z": 2.8676272904088207
+    },
+    "remote": {
+      "SE": 0.6463433548858118,
+      "coef": 0.4132924472137562,
+      "odds_ratio": 1.5117870792113266,
+      "odds_ratio_ci_95": {
+        "lower": 0.42591424746373235,
+        "upper": 5.366104060806112
+      },
+      "p": 0.5225421152117187,
+      "z": 0.6394317263256644
+    }
+  }
+}

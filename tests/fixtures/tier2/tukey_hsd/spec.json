@@ -1,0 +1,9 @@
+{
+  "id": "tukey_hsd",
+  "missingPolicy": "listwise",
+  "options": {
+    "alpha": 0.05,
+    "dep": "response_score",
+    "factor": "group"
+  }
+}

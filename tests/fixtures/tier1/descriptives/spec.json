@@ -1,0 +1,11 @@
+{
+  "id": "descriptives",
+  "missingPolicy": "listwise",
+  "options": {
+    "variables": [
+      "age",
+      "satisfaction",
+      "weekly_hours"
+    ]
+  }
+}

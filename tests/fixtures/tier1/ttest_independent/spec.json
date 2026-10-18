@@ -1,0 +1,8 @@
+{
+  "id": "ttest_independent",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "score",
+    "group": "program"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "H": 13.926603905160396,
+  "df": 2,
+  "groups": {
+    "Advanced": {
+      "n": 6
+    },
+    "Basic": {
+      "n": 6
+    },
+    "Expert": {
+      "n": 6
+    }
+  },
+  "notes": "Kruskal-Wallis tests the three independent training-level groups. The reported H and p are scipy.stats.kruskal results; df is k-1=2. Ties are handled by SciPy's tie correction.",
+  "p": 0.0009459678709158727,
+  "provenance": {
+    "call": "scipy.stats.kruskal(*groups)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  }
+}

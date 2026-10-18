@@ -1,0 +1,9 @@
+{
+  "id": "mcnemar",
+  "missingPolicy": "listwise",
+  "options": {
+    "after": "post_response",
+    "before": "pre_response",
+    "count": "count"
+  }
+}

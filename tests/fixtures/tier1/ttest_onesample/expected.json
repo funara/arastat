@@ -1,0 +1,21 @@
+{
+  "SE": 0.8660254037844385,
+  "ciLower": 69.45217532771588,
+  "ciUpper": 73.54782467228412,
+  "df": 7,
+  "mean": 71.5,
+  "meanDiff": 1.5,
+  "n": 8,
+  "notes": "Two-sided one-sample t test against testValue=70. The 95% CI is scipy's result confidence_interval; SD and SE use ddof=1.",
+  "p": 0.12687036692367099,
+  "provenance": {
+    "call": "scipy.stats.ttest_1samp(a=values, popmean=test_value, alternative='two-sided'); result.confidence_interval(confidence_level=0.95)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "sd": 2.449489742783178,
+  "t": 1.7320508075688774,
+  "testValue": 70.0
+}

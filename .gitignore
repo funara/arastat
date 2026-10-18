@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build and distribution outputs
+dist/
+out/
+build/
+release/
+*.blockmap
+
+# Python environments and bytecode
+.venv/
+**/.venv/
+env/
+venv/
+ENV/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+
+# Testing and temporary files
+.fixture-baseline.tmp
+*.tmp
+*.temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+plan.md
+
+# Local environment & settings
+.env
+.env.local
+.env.*.local
+app-settings.json
+ara-stats-settings.json
+arastat-settings.json
+
+# Operating System & IDE artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

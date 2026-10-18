@@ -1,0 +1,11 @@
+{
+  "id": "wilcoxon_one_sample",
+  "missingPolicy": "listwise",
+  "options": {
+    "alternative": "two-sided",
+    "dep": "score",
+    "method": "exact",
+    "mu": 50,
+    "zeroMethod": "wilcox"
+  }
+}

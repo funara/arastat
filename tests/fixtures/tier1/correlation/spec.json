@@ -1,0 +1,11 @@
+{
+  "id": "correlation",
+  "missingPolicy": "pairwise",
+  "options": {
+    "variables": [
+      "stress",
+      "wellbeing",
+      "sleep_hours"
+    ]
+  }
+}

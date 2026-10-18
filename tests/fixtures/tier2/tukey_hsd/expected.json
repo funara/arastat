@@ -1,0 +1,63 @@
+{
+  "alpha": 0.05,
+  "groups": {
+    "Medium": {
+      "mean": 60.0,
+      "n": 12,
+      "sd": 6.324555320336759
+    },
+    "Narrow": {
+      "mean": 50.0,
+      "n": 12,
+      "sd": 3.1622776601683795
+    },
+    "Wide": {
+      "mean": 70.0,
+      "n": 12,
+      "sd": 12.649110640673518
+    }
+  },
+  "notes": "All pairwise comparisons use Tukey HSD with alpha=0.05. mean_difference is group2 minus group1 in statsmodels' reported pair order; p_adjusted controls family-wise error.",
+  "pairs": [
+    {
+      "ci_95": {
+        "lower": -18.381303876728097,
+        "upper": -1.6186961232719046
+      },
+      "group1": "Medium",
+      "group2": "Narrow",
+      "mean_difference": -10.0,
+      "p_adjusted": 0.016478728953393418,
+      "reject": true
+    },
+    {
+      "ci_95": {
+        "lower": 1.6186961232719046,
+        "upper": 18.381303876728097
+      },
+      "group1": "Medium",
+      "group2": "Wide",
+      "mean_difference": 10.0,
+      "p_adjusted": 0.016478728953393418,
+      "reject": true
+    },
+    {
+      "ci_95": {
+        "lower": 11.618696123271905,
+        "upper": 28.381303876728097
+      },
+      "group1": "Narrow",
+      "group2": "Wide",
+      "mean_difference": 20.0,
+      "p_adjusted": 4.345919257020547e-06,
+      "reject": true
+    }
+  ],
+  "provenance": {
+    "call": "statsmodels.stats.multicomp.pairwise_tukeyhsd(endog=endog, groups=group_labels, alpha=0.05)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  }
+}

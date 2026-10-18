@@ -1,0 +1,42 @@
+{
+  "notes": "Numeric survey variables are summarized with sample SD (ddof=1). Quartiles use numpy.quantile(method='linear') exactly; there are no missing values in this fixture.",
+  "provenance": {
+    "call": "numpy.mean(values); numpy.std(values, ddof=1); numpy.quantile(values, [0.25, 0.5, 0.75], method='linear'); numpy.min(values); numpy.max(values)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "variables": {
+    "age": {
+      "max": 61.0,
+      "mean": 40.25,
+      "median": 38.5,
+      "min": 24.0,
+      "n": 8,
+      "q1": 30.5,
+      "q3": 48.5,
+      "sd": 12.79229678919533
+    },
+    "satisfaction": {
+      "max": 5.0,
+      "mean": 3.75,
+      "median": 4.0,
+      "min": 2.0,
+      "n": 8,
+      "q1": 3.0,
+      "q3": 4.25,
+      "sd": 1.0350983390135313
+    },
+    "weekly_hours": {
+      "max": 40.0,
+      "mean": 28.5,
+      "median": 29.0,
+      "min": 18.0,
+      "n": 8,
+      "q1": 23.0,
+      "q3": 33.0,
+      "sd": 7.615773105863909
+    }
+  }
+}

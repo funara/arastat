@@ -1,0 +1,31 @@
+{
+  "notes": "The segment column has one blank missing value. percent uses all rows as the denominator; validPercent uses validN, while missingN is reported separately. Levels are the three observed nonmissing labels.",
+  "provenance": {
+    "call": "collections.Counter(valid)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "variables": {
+    "segment": {
+      "counts": {
+        "Bronze": 3,
+        "Gold": 3,
+        "Silver": 3
+      },
+      "missingN": 1,
+      "percent": {
+        "Bronze": 30.0,
+        "Gold": 30.0,
+        "Silver": 30.0
+      },
+      "validN": 9,
+      "validPercent": {
+        "Bronze": 33.33333333333333,
+        "Gold": 33.33333333333333,
+        "Silver": 33.33333333333333
+      }
+    }
+  }
+}

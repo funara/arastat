@@ -1,0 +1,10 @@
+{
+  "id": "binomial",
+  "missingPolicy": "listwise",
+  "options": {
+    "n": "trials",
+    "p0": 0.5,
+    "successLevel": 27,
+    "variable": "successes"
+  }
+}

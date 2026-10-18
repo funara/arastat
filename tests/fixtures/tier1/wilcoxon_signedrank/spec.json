@@ -1,0 +1,8 @@
+{
+  "id": "wilcoxon_signedrank",
+  "missingPolicy": "listwise",
+  "options": {
+    "a": "pre_score",
+    "b": "post_score"
+  }
+}

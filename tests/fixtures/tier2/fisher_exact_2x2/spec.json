@@ -1,0 +1,10 @@
+{
+  "id": "fisher_exact_2x2",
+  "missingPolicy": "listwise",
+  "options": {
+    "alternative": "two-sided",
+    "col": "response",
+    "count": "count",
+    "row": "arm"
+  }
+}

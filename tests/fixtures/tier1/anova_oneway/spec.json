@@ -1,0 +1,8 @@
+{
+  "id": "anova_oneway",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "score",
+    "factor": "program"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "F": 468.7114740977874,
+  "adjR2": 0.99047037133395,
+  "dfModel": 2.0,
+  "dfResid": 7.0,
+  "n": 10,
+  "notes": "Multiple linear regression uses OLS with an intercept followed by study_hours and attendance_pct in that order. Confidence intervals are 95% result.conf_int(alpha=0.05) intervals.",
+  "pOverall": 3.505583212651413e-08,
+  "provenance": {
+    "call": "statsmodels.api.OLS(endog=y, exog=statsmodels.api.add_constant(predictors, has_constant='add')).fit(); result.conf_int(alpha=0.05)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "r2": 0.9925880665930722,
+  "terms": {
+    "attendance_pct": {
+      "SE": 0.29185815551214916,
+      "ciLower": 0.3029312162915774,
+      "ciUpper": 1.6832009613899095,
+      "coef": 0.9930660888407434,
+      "p": 0.011402612712503455,
+      "t": 3.4025641226236187
+    },
+    "const": {
+      "SE": 22.50473026025312,
+      "ciLower": -80.82368165317476,
+      "ciUpper": 25.606780244722266,
+      "coef": -27.608450704226243,
+      "p": 0.2595612649837974,
+      "t": -1.226784342000628
+    },
+    "study_hours": {
+      "SE": 0.5884351938839166,
+      "ciLower": -0.4468994192227347,
+      "ciUpper": 2.3359568406744877,
+      "coef": 0.9445287107258764,
+      "p": 0.1524950456735306,
+      "t": 1.605153329615781
+    }
+  }
+}

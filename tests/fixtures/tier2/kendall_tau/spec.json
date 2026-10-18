@@ -1,0 +1,11 @@
+{
+  "id": "kendall_tau",
+  "missingPolicy": "listwise",
+  "options": {
+    "a": "ordinal_x",
+    "alternative": "two-sided",
+    "b": "ordinal_y",
+    "method": "auto",
+    "variant": "b"
+  }
+}

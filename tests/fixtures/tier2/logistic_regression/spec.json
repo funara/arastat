@@ -1,0 +1,12 @@
+{
+  "id": "logistic_regression",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "outcome",
+    "model": "Logit",
+    "predictors": [
+      "engagement",
+      "remote"
+    ]
+  }
+}

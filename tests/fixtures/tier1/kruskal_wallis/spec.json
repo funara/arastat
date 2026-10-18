@@ -1,0 +1,8 @@
+{
+  "id": "kruskal_wallis",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "score",
+    "factor": "training_level"
+  }
+}

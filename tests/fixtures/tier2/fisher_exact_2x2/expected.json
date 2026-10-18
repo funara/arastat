@@ -1,0 +1,28 @@
+{
+  "a": 8,
+  "alternative": "two-sided",
+  "b": 12,
+  "c": 15,
+  "d": 5,
+  "n": 40,
+  "notes": "The table is ordered as [[Control improved, Control not improved], [Treatment improved, Treatment not improved]]. The p value is the exact two-sided Fisher probability.",
+  "odds_ratio": 0.2222222222222222,
+  "p": 0.05355099259437413,
+  "provenance": {
+    "call": "scipy.stats.fisher_exact(table=table, alternative='two-sided')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "table": [
+    [
+      8,
+      12
+    ],
+    [
+      15,
+      5
+    ]
+  ]
+}

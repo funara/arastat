@@ -1,0 +1,21 @@
+{
+  "U": 0.0,
+  "groups": {
+    "Coaching": {
+      "n": 7
+    },
+    "Standard": {
+      "n": 7
+    }
+  },
+  "method": "exact",
+  "notes": "The U statistic is for Standard as x versus Coaching as y. The exact two-sided method is used; the two groups have no tied values.",
+  "p": 0.0005827505827505828,
+  "provenance": {
+    "call": "scipy.stats.mannwhitneyu(x=standard, y=coaching, alternative='two-sided', method='exact')",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  }
+}

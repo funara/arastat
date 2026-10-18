@@ -1,0 +1,8 @@
+{
+  "id": "mannwhitney_u",
+  "missingPolicy": "listwise",
+  "options": {
+    "dep": "score",
+    "group": "program"
+  }
+}

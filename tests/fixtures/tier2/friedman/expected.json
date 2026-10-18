@@ -1,0 +1,15 @@
+{
+  "df": 2,
+  "k": 3,
+  "n": 10,
+  "notes": "Three related conditions are ranked within each of ten blocks. SciPy returns the statistic and p value; df is the standard k-1=2 for k=3 conditions.",
+  "p": 0.01356855901220097,
+  "provenance": {
+    "call": "scipy.stats.friedmanchisquare(condition_a, condition_b, condition_c)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "statistic": 8.599999999999994
+}

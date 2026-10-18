@@ -1,0 +1,59 @@
+{
+  "chi2": 2.9999999999999996,
+  "colLevels": [
+    "Satisfied",
+    "Neutral",
+    "Dissatisfied"
+  ],
+  "cramersV": 0.22360679774997896,
+  "df": 4,
+  "expected": [
+    [
+      3.3333333333333335,
+      3.3333333333333335,
+      3.3333333333333335
+    ],
+    [
+      3.3333333333333335,
+      3.3333333333333335,
+      3.3333333333333335
+    ],
+    [
+      3.3333333333333335,
+      3.3333333333333335,
+      3.3333333333333335
+    ]
+  ],
+  "n": 30,
+  "notes": "Rows are ordered North, South, West and columns Satisfied, Neutral, Dissatisfied. Yates correction is explicitly disabled (correction=False). Cramer's V is sqrt(chi2/(n*min(r-1,c-1))).",
+  "observed": [
+    [
+      5,
+      3,
+      2
+    ],
+    [
+      3,
+      4,
+      3
+    ],
+    [
+      2,
+      3,
+      5
+    ]
+  ],
+  "p": 0.5578254003710748,
+  "provenance": {
+    "call": "scipy.stats.chi2_contingency(observed=observed, correction=False)",
+    "numpy": "2.5.3",
+    "python": "3.12.14",
+    "scipy": "1.18.1",
+    "statsmodels": "0.15.0"
+  },
+  "rowLevels": [
+    "North",
+    "South",
+    "West"
+  ]
+}
