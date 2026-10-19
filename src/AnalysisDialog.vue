@@ -19,10 +19,37 @@ const dlg = ref<HTMLDialogElement | null>(null)
 const values = ref<Record<string, unknown>>({})
 const selected = ref<string | null>(null)
 const dragOver = ref<string | null>(null)
-// Filter text and the active token pill are dialog-only state: the registry rejects
-// unknown spec keys (1001), so neither ever serializes into `values`.
+// Filter text is dialog-only state: the registry rejects unknown spec keys (1001),
+// so it never serializes into `values`.
 const variableFilter = ref('')
-const activeToken = ref<{ key: string; name: string } | null>(null)
+const showGuidePopover = ref(false)
+
+/**
+ * Polishes field hint: strips technical parentheticals like (Scale, e.g., salary)
+ * to deliver concise, human-friendly guidance placed beneath the label.
+ */
+function cleanHint(text?: string): string {
+  if (!text) return ''
+  let s = text.trim()
+  s = s.replace(/\s*\([^)]*(?:e\.g\.|Scale|Nominal|Ordinal|Ratio)[^)]*\)/gi, '').trim()
+  s = s.replace(/[,;]+$/, '').trim()
+  if (s && !/[.!?]$/.test(s)) s += '.'
+  return s
+}
+
+/**
+ * Formats multi-step how-to guidance strings into clean numbered items.
+ */
+function formattedHowTo(raw?: string): string[] {
+  if (!raw) return []
+  if (/^\s*1\.\s+/.test(raw) || /\s+2\.\s+/.test(raw)) {
+    return raw
+      .split(/\s*\b\d+\.\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+  return [raw.trim()]
+}
 
 const varFilter = computed(() => variableFilter.value.trim().toLowerCase())
 
@@ -56,7 +83,7 @@ watch([() => props.schema, () => props.initial], ([s]) => {
   selected.value = null
   dragOver.value = null
   variableFilter.value = ''
-  activeToken.value = null
+  showGuidePopover.value = false
   nextTick(() => {
     const el = dlg.value
     if (el && !el.open) el.showModal()
@@ -72,7 +99,7 @@ watch(values, () => {
 
 function onClose(): void {
   selected.value = null
-  activeToken.value = null
+  showGuidePopover.value = false
   emit('close')
 }
 
@@ -109,67 +136,12 @@ function measureOf(name: string): Measure | null {
   return state.ds.columns.find((c) => c.name === name)?.measure ?? null
 }
 
-// --- Shuttle buttons (SPSS/JASP move arrows) --------------------------------
-// One token can be "active" at a time: its field's arrow flips to ◂ so the very
-// same control also moves the variable back out. Dialog-only state, never values.
-
-function toggleToken(key: string, name: string): void {
-  const t = activeToken.value
-  activeToken.value = t && t.key === key && t.name === name ? null : { key, name }
-}
-
-function shuttleMode(o: SpecOption): 'assign' | 'unassign' {
-  return activeToken.value?.key === o.key ? 'unassign' : 'assign'
-}
-
-/** Why ▸ cannot fire, or '' when it can. Keeps the disabled button explainable. */
-function shuttleBlock(o: SpecOption): string {
-  const t = activeToken.value
-  if (t) return `Move “${t.name}” out first (◂)`
-  const name = selected.value
-  if (!name) return 'Select a variable in Available Variables first'
-  if (!acceptable(o, name)) return `${name} is not a valid ${o.label}`
-  if (o.kind === 'variable') return values.value[o.key] ? `${o.label} already has ${values.value[o.key]}` : ''
-  const cur = listFor(o.key)
-  if (cur.includes(name)) return `${name} is already in ${o.label}`
-  if (o.max !== undefined && cur.length >= o.max) return `${o.label} is full (max ${o.max})`
-  return ''
-}
-
-function shuttleDisabled(o: SpecOption): boolean {
-  return shuttleMode(o) === 'assign' && shuttleBlock(o) !== ''
-}
-
-function shuttleLabel(o: SpecOption): string {
-  const t = activeToken.value
-  if (t && t.key === o.key) return `Unassign ${t.name}`
-  return `Assign ${selected.value ?? 'variable'} to ${o.label}`
-}
-
-function shuttleTitle(o: SpecOption): string {
-  return shuttleDisabled(o) ? shuttleBlock(o) : shuttleLabel(o)
-}
-
-/** The ▸ / ◂ action: reuses assignTo/unassign so measure gating and max hold. */
-function onShuttle(o: SpecOption): void {
-  const t = activeToken.value
-  if (t && t.key === o.key) {
-    unassign(o.key, t.name)
-    return
-  }
-  if (selected.value) assignTo(o.key, selected.value)
-}
-
 function assignTo(key: string, name?: string): boolean {
   const opt = props.schema?.options.find((o) => o.key === key)
   const target = name ?? selected.value
   if (!opt || !acceptable(opt, target)) return false
   if (opt.kind === 'variable') {
     values.value[key] = target
-    // A click-to-assign can overwrite a pill that was mid-move; drop the stale
-    // activation so ◂ never points at a variable that is no longer there.
-    const t = activeToken.value
-    if (t && t.key === key && t.name !== target) activeToken.value = null
     return true
   }
   const cur = listFor(key)
@@ -202,9 +174,6 @@ function unassign(key: string, name?: string): void {
   if (!opt) return
   if (opt.kind === 'variable') values.value[key] = ''
   else values.value[key] = listFor(key).filter((v) => v !== name)
-  // Every removal path (× button, drag-out, shuttle ◂) drops the activation too.
-  const t = activeToken.value
-  if (t && t.key === key && (opt.kind === 'variable' || t.name === name)) activeToken.value = null
 }
 
 // --- Drag and drop (HTML5, no deps) ---
@@ -329,25 +298,66 @@ function run(): void {
         </div>
         <h3 id="dlgTitle">{{ schema?.title ?? 'Analysis' }}</h3>
       </div>
-      <button type="button" class="dlg-close-x" title="Close (Esc)" aria-label="Close" @click="dlg?.close()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
-    </div>
-
-    <!-- Polished Guide Callout -->
-    <div v-if="schema?.howTo || schema?.description" class="dlg-guide-banner">
-      <div class="guide-icon" aria-hidden="true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="16" x2="12" y2="12" />
-          <line x1="12" y1="8" x2="12.01" y2="8" />
-        </svg>
-      </div>
-      <div class="guide-body">
-        <span class="guide-text">{{ schema?.howTo ?? schema?.description }}</span>
+      <div class="dlg-head-actions">
+        <div v-if="schema?.howTo || schema?.description" class="dlg-info-wrap">
+          <button
+            type="button"
+            class="dlg-info-btn"
+            aria-label="Analysis Guide &amp; Instructions"
+            :title="schema?.title ? `${schema.title} Guide` : 'Guide'"
+            @mouseenter="showGuidePopover = true"
+            @mouseleave="showGuidePopover = false"
+            @focus="showGuidePopover = true"
+            @blur="showGuidePopover = false"
+            @click="showGuidePopover = !showGuidePopover"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </button>
+          <div
+            v-if="showGuidePopover"
+            class="dlg-info-popover"
+            role="tooltip"
+            @mouseenter="showGuidePopover = true"
+            @mouseleave="showGuidePopover = false"
+          >
+            <div class="popover-head">
+              <div class="popover-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span>{{ schema?.title }} Guide</span>
+              </div>
+            </div>
+            <div class="popover-content">
+              <p v-if="schema?.description" class="popover-desc">{{ schema.description }}</p>
+              <div v-if="schema?.howTo" class="popover-howto-section">
+                <span class="popover-howto-title">Setup Instructions</span>
+                <div class="popover-howto-list">
+                  <div
+                    v-for="(step, idx) in formattedHowTo(schema.howTo)"
+                    :key="idx"
+                    class="popover-howto-item"
+                  >
+                    <span class="howto-item-badge">{{ idx + 1 }}</span>
+                    <span class="howto-item-text">{{ step }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="dlg-close-x" title="Close (Esc)" aria-label="Close" @click="dlg?.close()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -399,97 +409,73 @@ function run(): void {
       <!-- Right Column: Target Dropzones & Parameters -->
       <div class="dlg-right">
         <div v-for="o in varOptions" :key="o.key" class="target-field">
-          <div class="field-header">
+          <div class="target-field-meta">
             <span :id="`lbl-${o.key}`" class="field-label">
               {{ o.label }}
               <span v-if="o.required" class="req-star" title="Required">*</span>
             </span>
-            <span v-if="o.hint" class="field-hint">{{ o.hint }}</span>
+            <span v-if="o.hint" class="field-hint">{{ cleanHint(o.hint) }}</span>
           </div>
-          <div class="target-row">
-            <div
-              class="target-box"
-              :class="{ 'drag-over': dragOver === o.key, 'has-value': o.kind === 'variable' ? !!values[o.key] : listFor(o.key).length > 0 }"
-              role="group"
-              :aria-labelledby="`lbl-${o.key}`"
-              :title="selected ? `Click to place '${selected}'` : 'Drag a variable here'"
-              @click="assignTo(o.key)"
-              @dragover.prevent="dragOver = o.key"
-              @dragleave="dragOver = null"
-              @drop="onTargetDrop($event, o.key)"
-            >
-              <template v-if="o.kind === 'variable'">
-                <!-- The token carries a real remove <button>, so it is not itself a
-                     role=button (nested interactive content is invalid). Activation
-                     is a mouse convenience; the keyboard path is the × and the ◂
-                     shuttle button, which owns the aria-pressed state. -->
-                <span
-                  v-if="values[o.key]"
-                  class="token"
-                  :class="{ 'is-active': activeToken?.key === o.key }"
-                  draggable="true"
-                  :title="`${values[o.key]} - click to select, then use ◂ to move it back`"
-                  @dragstart="onTokenDragStart($event, o.key, values[o.key] as string)"
-                  @click.stop="toggleToken(o.key, values[o.key] as string)"
-                >
-                  <MeasureIcon v-if="measureOf(values[o.key] as string)" :measure="measureOf(values[o.key] as string)!" :show-title="false" />
-                  <span class="token-name">{{ values[o.key] }}</span>
-                  <button type="button" class="token-remove-btn" :aria-label="`Remove ${values[o.key]}`" title="Remove" @click.stop="unassign(o.key)">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </span>
-                <div v-else class="target-empty-prompt">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 5v14M5 12h14"/>
+          <div
+            class="target-box"
+            :class="{ 'drag-over': dragOver === o.key, 'has-value': o.kind === 'variable' ? !!values[o.key] : listFor(o.key).length > 0 }"
+            role="group"
+            :aria-labelledby="`lbl-${o.key}`"
+            :title="selected ? `Click to place '${selected}'` : 'Drag a variable here'"
+            @click="assignTo(o.key)"
+            @dragover.prevent="dragOver = o.key"
+            @dragleave="dragOver = null"
+            @drop="onTargetDrop($event, o.key)"
+          >
+            <template v-if="o.kind === 'variable'">
+              <span
+                v-if="values[o.key]"
+                class="token"
+                draggable="true"
+                :title="`${values[o.key]} - Drag to move or click × to remove`"
+                @dragstart="onTokenDragStart($event, o.key, values[o.key] as string)"
+              >
+                <MeasureIcon v-if="measureOf(values[o.key] as string)" :measure="measureOf(values[o.key] as string)!" :show-title="false" />
+                <span class="token-name">{{ values[o.key] }}</span>
+                <button type="button" class="token-remove-btn" :aria-label="`Remove ${values[o.key]}`" title="Remove" @click.stop="unassign(o.key)">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
-                  <span>Drop variable or click to assign</span>
-                </div>
-              </template>
-              <template v-else>
-                <span
-                  v-for="name in listFor(o.key)"
-                  :key="name"
-                  class="token"
-                  :class="{ 'is-active': activeToken?.key === o.key && activeToken?.name === name }"
-                  draggable="true"
-                  :title="`${name} - click to select, then use ◂ to move it back`"
-                  @dragstart="onTokenDragStart($event, o.key, name)"
-                  @click.stop="toggleToken(o.key, name)"
-                >
-                  <MeasureIcon v-if="measureOf(name)" :measure="measureOf(name)!" :show-title="false" />
-                  <span class="token-name">{{ name }}</span>
-                  <button type="button" class="token-remove-btn" :aria-label="`Remove ${name}`" title="Remove" @click.stop="unassign(o.key, name)">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </span>
-                <div v-if="!listFor(o.key).length" class="target-empty-prompt">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 5v14M5 12h14"/>
+                </button>
+              </span>
+              <div v-else class="target-empty-prompt">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                <span>Drop variable or click to assign</span>
+              </div>
+            </template>
+            <template v-else>
+              <span
+                v-for="name in listFor(o.key)"
+                :key="name"
+                class="token"
+                draggable="true"
+                :title="`${name} - Drag to move or click × to remove`"
+                @dragstart="onTokenDragStart($event, o.key, name)"
+              >
+                <MeasureIcon v-if="measureOf(name)" :measure="measureOf(name)!" :show-title="false" />
+                <span class="token-name">{{ name }}</span>
+                <button type="button" class="token-remove-btn" :aria-label="`Remove ${name}`" title="Remove" @click.stop="unassign(o.key, name)">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
-                  <span>Drop variables or click to assign</span>
-                </div>
-              </template>
-            </div>
-            <!-- SPSS/JASP shuttle arrow: ▸ moves the selected source variable in, ◂ on
-                 an active token moves that variable back out. -->
-            <button
-              type="button"
-              class="shuttle-btn"
-              :class="{ 'is-remove': shuttleMode(o) === 'unassign' }"
-              :disabled="shuttleDisabled(o)"
-              :aria-pressed="shuttleMode(o) === 'unassign'"
-              :aria-label="shuttleLabel(o)"
-              :title="shuttleTitle(o)"
-              @click.stop="onShuttle(o)"
-            >
-              {{ shuttleMode(o) === 'unassign' ? '◂' : '▸' }}
-            </button>
+                </button>
+              </span>
+              <div v-if="!listFor(o.key).length" class="target-empty-prompt">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+                <span>Drop variables or click to assign</span>
+              </div>
+            </template>
           </div>
 
           <!-- Group levels are read live from the data; nothing here is serialized. -->
@@ -577,7 +563,6 @@ function run(): void {
         </p>
       </div>
       <div class="dlg-foot-actions">
-        <button type="button" class="btn" @click="dlg?.close()">Cancel</button>
         <button
           type="button"
           class="btn btn-primary"
@@ -594,8 +579,9 @@ function run(): void {
 
 <style scoped>
 .analysis-dialog {
-  width: min(740px, calc(100vw - 32px));
-  max-height: min(660px, calc(100dvh - 48px));
+  width: min(760px, calc(100vw - 32px));
+  height: clamp(520px, 80vh, 720px);
+  max-height: calc(100dvh - 36px);
   margin: auto;
   position: fixed;
   inset: 0;
@@ -616,6 +602,7 @@ function run(): void {
   padding: 12px 18px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-alt);
+  position: relative;
 }
 
 .dlg-head-title-wrap {
@@ -643,6 +630,141 @@ function run(): void {
   color: var(--text);
 }
 
+.dlg-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dlg-info-wrap {
+  position: relative;
+}
+
+.dlg-info-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+  padding: 0;
+}
+
+.dlg-info-btn:hover,
+.dlg-info-btn:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dlg-info-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -4px;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg), 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  overflow: hidden;
+  animation: popoverFadeIn 0.14s ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.popover-head {
+  padding: 10px 14px;
+  background: var(--panel-alt);
+  border-bottom: 1px solid var(--line);
+}
+
+.popover-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.popover-content {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.popover-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.popover-howto-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.popover-howto-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.popover-howto-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popover-howto-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.howto-item-badge {
+  flex: 0 0 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.howto-item-text {
+  flex: 1;
+}
+
 .dlg-close-x {
   width: 28px;
   height: 28px;
@@ -660,38 +782,6 @@ function run(): void {
 
 .dlg-close-x:hover {
   background: var(--surface-hover);
-  color: var(--text);
-}
-
-/* Guide banner */
-.dlg-guide-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  margin: 12px 18px 0;
-  background: var(--accent-soft);
-  border: 1px solid rgba(35, 103, 236, 0.18);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text);
-}
-
-.guide-icon {
-  color: var(--accent);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.guide-body {
-  flex: 1;
-}
-
-.guide-text {
-  font-size: 12px;
-  line-height: 1.45;
   color: var(--text);
 }
 
@@ -846,58 +936,34 @@ function run(): void {
 .target-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
-.field-hint {
-  font-size: 11px;
-  color: var(--muted);
-  font-weight: normal;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-.target-row {
+.target-field-meta {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.shuttle-btn {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line-strong);
-  background: var(--panel-alt);
-  color: var(--accent);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.shuttle-btn:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
-
-.shuttle-btn:disabled {
+.target-field-meta .field-label {
+  font-size: 11px;
+  font-weight: 700;
   color: var(--muted);
-  opacity: 0.5;
-  cursor: not-allowed;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.shuttle-btn.is-remove {
-  color: var(--text);
+.target-field-meta .field-hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .target-box {
+  width: 100%;
   min-height: 52px;
-  flex: 1;
-  min-width: 0;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
   border: 1.5px dashed var(--line-strong);
   background: var(--panel-alt);
@@ -951,17 +1017,6 @@ function run(): void {
 
 .token:active {
   cursor: grabbing;
-}
-
-/* Active token: the ◂ arrow in its field is now enabled for the move-back. */
-.token.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
-.token.is-active .token-name {
-  font-weight: 700;
 }
 
 .token-remove-btn {

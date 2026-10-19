@@ -64,12 +64,16 @@ All components **must** reference CSS custom properties from `:root` / `[data-th
 
 ## 4. Core Component Specifications
 
-### 4.1 Workspace Layout & Resizable Panes
-- **Three-Pane Workbench**:
-  1. **Left/Center Pane (`.pane-data`)**: Data Editor (`Data View` & `Variable View`). Minimum width `340px`.
-  2. **Center/Right Pane (`.pane-results`)**: JASP-style APA Output Viewer. Collapses into a `36px` vertical `.results-rail` (`Ctrl+J`).
-  3. **Right Dock (`AiDock.vue`)**: Provider-agnostic AI Copilot drawer (`360px` default width). Collapses into a vertical rail.
-- **Splitter Handle (`.pane-splitter`)**: `6px` hit target with a `2px` visual line that highlights in `var(--accent)` on hover/drag.
+### 4.1 Workspace Layout & Resizable / Collapsible Panes
+- **Three-Pane Workbench & Mutual-Exclusion Rule**:
+  1. **Left Pane (`.pane-data`)**: Data Editor (`Data View` & `Variable View`). Minimum width **`460px`** (`DEFAULT_DATA_WIDTH = 480px`) so header controls (`+ Row`/`+ Variable`, `Undo`, `Redo`, `Collapse`) never clip or overlap. Collapses to the **left** into a `34px` vertical `.data-rail` (`Ctrl+D`).
+  2. **Center Pane (`.pane-results`)**: JASP-style APA Output Viewer (`min-width: 280px`). Collapses into a `34px` vertical `.results-rail` (`Ctrl+J`).
+  3. **Right Dock (`AiDock.vue`)**: Provider-agnostic AI Copilot drawer (`360px` default width). Collapses into a `34px` right `.ai-rail` independently of the other panes.
+- **Core Visibility Invariant (`showData || showResults === true`)**:
+  - At least **one** of **Data/Variable Pane** or **Result Pane** must be expanded at all times (either Data only, Result only, or both side-by-side). Both cannot be collapsed simultaneously.
+  - Collapsing Data when Result is closed automatically expands Result (`showResults = true`), and collapsing Result when Data is closed automatically expands Data (`showData = true`).
+  - `ARA Assistant` (`AiDock.vue`) is completely free from this rule and can open or collapse at any time.
+- **Splitter Handle (`.pane-splitter`)**: `6px` hit target with a `2px` visual line that highlights in `var(--accent)` on hover/drag; rendered only when both `showData && showResults` are open.
 
 ### 4.2 Unified Tab & Stepper System (`.ara-tabs` & `.ara-stepper`)
 ARAStat uses two standardized tab patterns across the entire app:

@@ -5,7 +5,7 @@
 // the `pin` event into the run store.
 import { computed, nextTick, ref, watch } from 'vue'
 import Plotly from 'plotly.js-dist-min'
-import { state, type Cell } from './store.ts'
+import { state, showValueLabels, type Cell } from './store.ts'
 
 export type VizType = 'scatter' | 'bar' | 'line' | 'histogram' | 'boxplot'
 
@@ -121,6 +121,8 @@ function buildTrace(): { trace: Record<string, unknown>; yTitle: string; title: 
 
   if (vizType.value === 'bar') {
     // Categorical X + numeric Y aggregates to the group mean.
+    const labels = state.ds.columns.find((c) => c.name === vizX.value)?.valueLabels
+    const showLabels = showValueLabels.value
     const groups = new Map<string, number[]>()
     const len = Math.max(rawX.length, rawY.length)
     for (let i = 0; i < len; i++) {
@@ -135,7 +137,8 @@ function buildTrace(): { trace: Record<string, unknown>; yTitle: string; title: 
     const cats: string[] = []
     const means: number[] = []
     for (const [cat, vals] of groups) {
-      cats.push(cat)
+      const hit = showLabels ? labels?.[cat] : undefined
+      cats.push(hit ? `${hit} (${cat})` : cat)
       means.push(Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100)
     }
     return {

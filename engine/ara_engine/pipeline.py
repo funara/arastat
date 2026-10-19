@@ -235,21 +235,21 @@ def _assumption_patches(run_id: str, address: str, analysis_id: str, spec, cols:
     return "< .001" if p < 0.001 else f"{p:.3f}".removeprefix("0")
 
 
-def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
+def _result_elements(run_id: str, analysis_id: str, spec, stats, cols=None) -> list[dict]:
     """Build §8 result-tree patches for a successful run (house APA style)."""
     out: list[dict] = []
     title = TITLES[analysis_id]
     base = run_id
 
     if analysis_id == "descriptives":
-        rows = [[name, s["n"], s["mean"], s["sd"]] for name, s in stats["variables"].items()]
+        rows = [[name, s["n"], s["mean"], s["sd"], s["median"], (s["q3"] - s["q1"] if isinstance(s["q3"], (int, float)) and isinstance(s["q1"], (int, float)) else None), s["min"], s["max"]] for name, s in stats["variables"].items()]
         out.append(
             _table(
                 f"{base}/table/1",
                 "Descriptive statistics",
-                ["Variable", "n", "M", "SD"],
+                ["Variable", "n", "M", "SD", "Median", "IQR", "Min", "Max"],
                 rows,
-                ["Note. SD is the sample standard deviation (ddof = 1)."],
+                ["Note. SD is the sample standard deviation (ddof = 1). IQR = Q3 - Q1."],
             )
         )
         out.append(_note(f"{base}/note/1", f"{title} summarized {len(stats['variables'])} variables."))
@@ -304,10 +304,10 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
             _table(
                 f"{base}/table/2",
                 "Test results",
-                ["", "t", "df", "p"],
+                ["", "t", "df", "p", "Mean diff", "SE diff", "95% CI Lower", "95% CI Upper"],
                 [
-                    [f"{spec['dep']} (Student’s)", stats["student"]["t"], stats["student"]["df"], stats["student"]["p"]],
-                    [f"{spec['dep']} (Welch’s)", stats["welch"]["t"], stats["welch"]["df"], stats["welch"]["p"]],
+                    [f"{spec['dep']} (Student’s)", stats["student"]["t"], stats["student"]["df"], stats["student"]["p"], stats["student"]["meanDiff"], stats["student"]["SE"], stats["student"]["ciLower"], stats["student"]["ciUpper"]],
+                    [f"{spec['dep']} (Welch’s)", stats["welch"]["t"], stats["welch"]["df"], stats["welch"]["p"], stats["welch"]["meanDiff"], stats["welch"]["SE"], stats["welch"]["ciLower"], stats["welch"]["ciUpper"]],
                 ],
                 ["Note. Mean difference is the first group minus the second group in data order."],
             )
@@ -330,7 +330,7 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
                 f"One-way ANOVA - {spec['dep']}",
                 ["Group", "n", "M", "SD"],
                 rows,
-                [f"Note. Grouping variable: {spec['factor']}. η² = {stats['etaSquared']:.3f}."],
+                [f"Note. Grouping variable: {spec['factor']}. η2 = {stats['etaSquared']:.3f}."],
             )
         )
         out.append(
@@ -341,6 +341,22 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
                 [[stats["F"], stats["df1"], stats["df2"], stats["p"]]],
             )
         )
+        _tk = None
+        if len(stats["groups"]) >= 3 and isinstance(cols, dict):
+            try:
+                _tk = HANDLERS["tukey_hsd"]({"dep": spec["dep"], "factor": spec["factor"], "alpha": 0.05}, cols)
+            except Exception:
+                _tk = None
+            if _tk is not None:
+                out.append(
+                    _table(
+                        f"{base}/table/3",
+                        "Post-hoc comparisons (Tukey HSD)",
+                        ["Group 1", "Group 2", "Mean diff", "p adj", "95% CI Lower", "95% CI Upper"],
+                        [[p["group1"], p["group2"], p["mean_difference"], p["p_adjusted"], p["ci_95"]["lower"], p["ci_95"]["upper"]] for p in _tk["pairs"]],
+                        ["Note. Family-wise alpha = .05."],
+                    )
+                )
     elif analysis_id == "chisq_independence":
         out.append(
             _table(
@@ -355,6 +371,9 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
             )
         )
     elif analysis_id == "correlation":
+        _pair_n = stats["nMatrix"][0][0] if stats.get("nMatrix") and stats["nMatrix"][0] else "?"
+        if stats.get("nMatrix") and stats["nMatrix"][0] and len(stats["nMatrix"][0]) > 1:
+            _pair_n = stats["nMatrix"][0][1]
         out.append(
             _table(
                 f"{base}/table/1",
@@ -362,6 +381,15 @@ def _result_elements(run_id: str, analysis_id: str, spec, stats) -> list[dict]:
                 stats["variables"],
                 [list(row) for row in stats["rMatrix"]],
                 ["Note. Pairwise complete observations; the p and n matrices mirror this layout."],
+            )
+        )
+        out.append(
+            _table(
+                f"{base}/table/2",
+                "Pairwise p-values",
+                stats["variables"],
+                [list(row) for row in stats["pMatrix"]],
+                [f"Note. Two-tailed p-values for each pair (n = {_pair_n})."],
             )
         )
     elif analysis_id == "shapiro_wilk":
@@ -734,7 +762,7 @@ def run_analysis(run_id: str, analysis_id: str, spec, data, missing_policy: str,
     handler = HANDLERS[analysis_id]
     try:
         stats = handler(spec, cols)
-        patches = _result_elements(run_id, analysis_id, spec, stats)
+        patches = _result_elements(run_id, analysis_id, spec, stats, cols)
     except (DataError, NumericError) as exc:
         code = 1003 if isinstance(exc, DataError) else 1004
         raise AnalysisFailure(code, exc.user_message, exc.detail) from None
@@ -750,7 +778,7 @@ def run_analysis(run_id: str, analysis_id: str, spec, data, missing_policy: str,
             "The statistical test could not be computed from this data. Check the data and options.",
             f"{type(exc).__name__}: {exc}",
         ) from None
-    patches = _result_elements(run_id, analysis_id, spec, stats)
+    patches = _result_elements(run_id, analysis_id, spec, stats, cols)
     patches = [*patches, *_assumption_patches(run_id, f"{run_id}/note/assumptions", analysis_id, spec, cols)]
     if chart is not None:
         patches = [*patches, _chart_patch(run_id, chart, data)]

@@ -34,7 +34,7 @@ Run these commands from the repository root (`C:\Users\adhir\Documents\Git\ARAEc
 | **Rust Host Unit Tests** | `npm run test:rust` | Runs `cargo test --manifest-path src-tauri/Cargo.toml` (tests AES-GCM crypto, AI proxy validation, SAV parser, engine framing, recent files, updater). |
 | **Frontend Production Build** | `npm run build` | Builds Vite frontend from `src/` into `dist/`. |
 | **Tauri Dev Mode** | `npm run dev` | Starts Vite dev server on `http://localhost:5173` and launches the Tauri v2 desktop window. |
-| **Regenerate Golden Fixtures** | `engine\.venv\Scripts\python.exe engine/generate_fixtures.py` | Regenerates `expected.json` files in `tests/fixtures/` when adding a new statistical test. |
+| **Regenerate Golden Fixtures** | `engine\.venv\Scripts\python.exe engine/ara_engine/fixtures.py` | Regenerates `expected.json` files in `tests/fixtures/` when adding a new statistical test. |
 
 ---
 
@@ -56,8 +56,8 @@ Whenever you add a new statistical test (e.g., `reliability_cronbach` or `factor
    - Add the `AnalysisSchema` entry to `SCHEMAS` with matching `id`, `title`, `description`, `howTo`, and `options` (`variable`, `variable-list`, `number`, `enum`, `boolean`) including allowed `measures` (`['scale', 'ratio', 'ordinal', 'nominal']`).
 5. **Menu & Smart Advisor Wiring (`src/App.vue` / `src/AppTitlebar.vue` & `src/advisor.ts`)**:
    - Add the menu item under the `Analyze` menu and register appropriate recommendation heuristics in `src/advisor.ts`.
-6. **Golden Reference Fixture (`engine/generate_fixtures.py` & `tests/ref.test.js`)**:
-   - Add a deterministic fixture generator in `engine/generate_fixtures.py` writing `input.csv`, `spec.json`, and `expected.json` under `tests/fixtures/tier1/<id>` or `tests/fixtures/tier2/<id>`.
+6. **Golden Reference Fixture (`engine/ara_engine/fixtures.py` & `tests/ref.test.js`)**:
+   - Add a deterministic fixture generator in `engine/ara_engine/fixtures.py` writing `input.csv`, `spec.json`, and `expected.json` under `tests/fixtures/tier1/<id>` or `tests/fixtures/tier2/<id>`.
    - Add `<id>` (alphabetically) to `ANALYSIS_IDS` in `tests/ref.test.js` and run `npm test` to confirm `1e-9` golden parity.
 
 ---

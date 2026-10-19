@@ -51,6 +51,7 @@ export type ColumnValues = Array<number | null> | Array<string | null>
 export interface ColumnarDataset {
   columns: ColumnMeta[]
   data: Record<string, ColumnValues>
+  sample?: boolean
 }
 
 /** Boring defaults for columns without meta (csv/xlsx inference). */

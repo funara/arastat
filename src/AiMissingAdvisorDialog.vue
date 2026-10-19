@@ -504,6 +504,27 @@ function strategyLabel(method: AdvisoryItem['recommendedMethod']): string {
 }
 const totalMissingCells = computed(() => advisoryItems.value.reduce((s, i) => s + i.missingN, 0))
 const stagedImputes = ref<StagedImpute[]>([])
+const noticesExpanded = ref(false)
+const missingExpanded = ref(false)
+
+function formatIssueKind(kind: string): string {
+  switch (kind) {
+    case 'unlabeledCodes':
+    case 'unlabeled_codes': return 'Discrete Codes'
+    case 'idLike':
+    case 'id_like': return 'Identifier'
+    case 'measureMismatch':
+    case 'measure_mismatch': return 'Scale Mismatch'
+    case 'dirtyCategories':
+    case 'dirty_categories': return 'Dirty Categories'
+    case 'outliers': return 'Outliers'
+    case 'sentinels':
+    case 'sentinel_missing': return 'Sentinel Codes'
+    case 'constant': return 'Constant'
+    case 'empty': return 'Empty'
+    default: return kind.replace(/[-_]/g, ' ')
+  }
+}
 
 function isImputeStaged(item: AdvisoryItem): boolean {
   return stagedImputes.value.some((s) => s.name === item.name)
@@ -626,7 +647,7 @@ function applyAllStaged(): void {
   healthTick.value++
 
   if (undoDepth() > beforeDepth) {
-    fixStatus.value = `Successfully applied ${appliedCount} change${appliedCount === 1 ? '' : 's'}. Full undo supported (Ctrl+Z).`
+    fixStatus.value = `Successfully applied ${appliedCount} change${appliedCount === 1 ? '' : 's'}.`
   } else {
     fixStatus.value = 'No changes were applied.'
   }
@@ -725,6 +746,32 @@ function dimColorClass(pct: number): string {
   return 'is-low'
 }
 
+const scoreRating = computed(() => {
+  const s = health.value?.score ?? 0
+  if (s >= 85) return { label: 'Optimal', class: 'is-good' }
+  if (s >= 70) return { label: 'Good', class: 'is-good' }
+  if (s >= 50) return { label: 'Fair', class: 'is-fair' }
+  return { label: 'Needs Review', class: 'is-low' }
+})
+
+function goToGroup(groupKey: 'scales' | 'missing' | 'integrity' | 'structural'): void {
+  step.value = 2
+  void nextTick().then(() => {
+    const selector = groupKey === 'missing'
+      ? '.review-issue-group.is-missing'
+      : groupKey === 'integrity'
+      ? '.review-issue-group.is-integrity'
+      : groupKey === 'structural'
+      ? '.review-issue-group.is-structural'
+      : '.review-issue-group.is-scales'
+    const el = modalCard.value?.querySelector<HTMLDetailsElement>(selector)
+    if (el) {
+      el.open = true
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  })
+}
+
 // --- Impact & Audit Trail --------------------------------------------------------
 const activeActionsCount = computed(() =>
   activityLog.value.filter((e) => !e.undone && e.kind !== 'dismiss').length
@@ -820,6 +867,9 @@ watch(
         if (scanStatus.value !== 'error') scanStatus.value = 'ready'
         modalCard.value?.focus()
         if (fv) scrollToFocusCard()
+        if (!aiRec.value && state.ds.columns.length) {
+          void loadAiRec()
+        }
       })
     }
   }
@@ -831,10 +881,8 @@ watch(
     <div ref="modalCard" class="modal-card ai-advisor-modal" role="dialog" aria-modal="true" aria-labelledby="dha-title" tabindex="-1">
       <div class="modal-header">
         <div class="modal-title-wrap">
-          <div class="ai-spark-icon">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
-            </svg>
+          <div class="dha-title-icon-wrap">
+            <img src="/icon.png" alt="ARAStat" class="dha-app-icon" />
           </div>
           <div>
             <h3 id="dha-title">Data Health &amp; Preparation</h3>
@@ -847,35 +895,6 @@ watch(
           </svg>
         </button>
       </div>
-
-      <!-- Workflow stepper: subheader position so the queue sizes are visible on
-           every step (Step 2 = staged, Step 3 = applied). Roving tabindex keeps
-           it reachable by Tab and arrow keys. -->
-      <nav class="ara-stepper dha-step-count" aria-label="Data health workflow" aria-live="polite" @keydown="stepKeyNav">
-        <template v-for="s in STEPS" :key="s.n">
-          <span
-            v-if="s.n > 1"
-            class="dha-connector"
-            :class="{ 'is-done': step >= s.n }"
-            aria-hidden="true"
-          ></span>
-          <button
-            type="button"
-            class="dha-dot"
-            :class="{ 'is-done': step > s.n, 'is-current': step === s.n }"
-            :tabindex="step === s.n ? 0 : -1"
-            :aria-current="step === s.n ? 'step' : undefined"
-            :aria-label="`Step ${s.n}: ${s.label}. ${s.hint}`"
-            :title="`${s.label} — ${s.hint}`"
-            @click="goStep(s.n)"
-          >
-            <span class="dha-dot-circle" aria-hidden="true">{{ step > s.n ? '✓' : s.n }}</span>
-            <span class="dha-dot-label">{{ s.label }}</span>
-            <span v-if="s.n === 2 && stagedCount > 0" class="dha-dot-badge">{{ stagedCount }}</span>
-            <span v-else-if="s.n === 3 && activeActionsCount > 0" class="dha-dot-badge">{{ activeActionsCount }}</span>
-          </button>
-        </template>
-      </nav>
 
       <div class="modal-body">
         <!-- STEP 1: AUDIT / DETECT -->
@@ -895,112 +914,86 @@ watch(
             <p>Import a dataset to see its health score and recommended actions.</p>
           </div>
           <template v-else>
-            <!-- Executive Vitals Anchor: Score + Dimension Percent Strip (Left) & Rows x Cols / Cases (Right) -->
+            <!-- Executive Vitals Anchor: Score Radial Gauge (Left), 4 Dimension Gauges (Center), Scope & Completeness (Right) -->
             <div class="executive-vitals-anchor">
-              <div class="vitals-score" :class="dimColorClass(health.score)">
-                <span class="vitals-score-num">{{ Math.round(health.score) }}</span>
-                <span class="vitals-score-den">/100</span>
-              </div>
-              <div class="vitals-dims-strip">
-                <div
-                  v-for="dim in health.dimensions"
-                  :key="dim.id"
-                  class="vitals-dim-chip"
-                  :class="dimColorClass(dim.pct)"
-                  :title="`${dim.label}: ${Math.round(dim.pct)}%`"
-                >
-                  <span class="dim-name">{{ dim.label }}</span>
-                  <span class="dim-val">{{ Math.round(dim.pct) }}%</span>
-                </div>
-              </div>
-              <div class="vitals-meta">
-                <strong>{{ health.rows }} rows &times; {{ health.columns }} columns</strong>
-                <span>{{ readiness.completeRows }}/{{ readiness.rows }} cases ({{ Math.round((readiness.completeRows / (readiness.rows || 1)) * 100) }}% complete)</span>
-              </div>
-            </div>
-
-            <!-- 2. Primary Audit Findings: Immediate, actionable diagnosis (THE HIGHLIGHT) -->
-            <div v-if="visibleIssues.length || advisoryItems.length" class="dha-findings-row">
-              <div class="dha-finding-card is-notices" @click="step = 2">
-                <div class="dha-finding-content">
-                  <div class="dha-finding-text">
-                    <div class="dha-finding-title-row">
-                      <strong class="dha-finding-title">Column Notices</strong>
-                      <span class="dha-finding-count-badge" :class="{ 'is-warn': visibleIssues.length > 0 }">{{ visibleIssues.length }}</span>
-                    </div>
-                    <p class="dha-finding-desc">
-                      {{ visibleIssues.length ? `${visibleIssues.length} issues on discrete codes, IDs, or outliers.` : 'All columns have appropriate measurement levels.' }}
-                    </p>
+              <!-- Pillar 1: Health Score Gauge -->
+              <div class="vitals-score-pillar" :class="scoreRating.class">
+                <div class="vitals-gauge-wrap">
+                  <svg class="vitals-gauge-svg" width="56" height="56" viewBox="0 0 56 56">
+                    <circle class="gauge-bg" cx="28" cy="28" r="23" stroke-width="4.5" fill="none" />
+                    <circle
+                      class="gauge-fill"
+                      cx="28"
+                      cy="28"
+                      r="23"
+                      stroke-width="4.5"
+                      fill="none"
+                      :stroke-dasharray="144.51"
+                      :stroke-dashoffset="144.51 * (1 - Math.min(100, Math.max(0, health.score)) / 100)"
+                    />
+                  </svg>
+                  <div class="vitals-gauge-center">
+                    <span class="vitals-score-num">{{ Math.round(health.score) }}</span>
                   </div>
                 </div>
-                <button
-                  v-if="visibleIssues.length"
-                  type="button"
-                  class="btn btn-sm btn-subtle finding-action-btn"
-                  @click.stop="step = 2"
-                >
-                  Review Issues &rarr;
-                </button>
+                <div class="vitals-score-info">
+                  <span class="vitals-score-tag" :class="scoreRating.class">{{ scoreRating.label }}</span>
+                  <span class="vitals-score-hint">Quality Index</span>
+                </div>
               </div>
 
-              <div class="dha-finding-card is-missing" @click="step = 2">
-                <div class="dha-finding-content">
-                  <div class="dha-finding-text">
-                    <div class="dha-finding-title-row">
-                      <strong class="dha-finding-title">Missing Data</strong>
-                      <span class="dha-finding-count-badge" :class="{ 'is-warn': totalMissingCells > 0 }">{{ totalMissingCells }} cells</span>
+              <!-- Pillar 2: 4 Dimension Quality Bars -->
+              <div class="vitals-dims-pillar">
+                <div class="vitals-dims-grid">
+                  <div
+                    v-for="dim in health.dimensions"
+                    :key="dim.id"
+                    class="vitals-dim-card"
+                    :class="dimColorClass(dim.pct)"
+                    :title="`${dim.label}: ${Math.round(dim.pct)}% — ${dim.detail}`"
+                  >
+                    <div class="vitals-dim-head">
+                      <span class="dim-name">{{ dim.label }}</span>
+                      <span class="dim-val">{{ Math.round(dim.pct) }}%</span>
                     </div>
-                    <p class="dha-finding-desc">
-                      {{ advisoryItems.length ? `${advisoryItems.length} columns have missing values across cases.` : 'Dataset is 100% complete across all columns.' }}
-                    </p>
+                    <div class="vitals-dim-track">
+                      <div class="vitals-dim-bar" :style="{ width: `${Math.min(100, Math.max(0, dim.pct))}%` }"></div>
+                    </div>
                   </div>
                 </div>
-                <button
-                  v-if="advisoryItems.length"
-                  type="button"
-                  class="btn btn-sm btn-subtle finding-action-btn"
-                  @click.stop="step = 2"
-                >
-                  Review Imputations &rarr;
-                </button>
+              </div>
+
+              <!-- Pillar 3: Scope & Case Completeness -->
+              <div class="vitals-scope-pillar">
+                <div class="scope-stat-box">
+                  <div class="scope-stat-row">
+                    <svg class="scope-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <path d="M3 9h18M9 21V9" />
+                    </svg>
+                    <strong class="scope-size-text">{{ health.rows.toLocaleString() }} rows &times; {{ health.columns }} columns</strong>
+                  </div>
+                  <div class="scope-cases-row">
+                    <span class="scope-cases-count">{{ readiness.completeRows }}/{{ readiness.rows }} valid cases</span>
+                  </div>
+                </div>
               </div>
             </div>
-            <div v-else class="dha-clean-bar">
-              <span class="clean-check">✓</span>
-              <span>Dataset looks clean — no column notices, no missing cells.</span>
-            </div>
 
-            <!-- 3. AI Statistical Advisor: Contextual Guidance & Hypothesis Generator -->
+            <!-- 2. AI Data Health Advisor: Pure Advisory Guidance (Actions in Stage 2) -->
             <div class="dha-advisor-section">
               <div class="dha-advisor-head">
                 <div class="dha-advisor-title-wrap">
+                  <div class="ai-spark-icon-sm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/>
+                    </svg>
+                  </div>
                   <div>
-                    <strong class="dha-advisor-title">Statistical Advisor</strong>
+                    <strong class="dha-advisor-title">AI Data Health Advisor</strong>
                     <span class="dha-advisor-subtitle">Contextual guidance on variable scaling, imputation strategy, and data readiness.</span>
                   </div>
                 </div>
-                <button
-                  v-if="!aiRec && !aiRecLoading"
-                  type="button"
-                  class="btn btn-primary btn-sm advisor-trigger-btn"
-                  @click="loadAiRec"
-                >
-                  <svg class="btn-sparkle-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
-                  </svg>
-                  <span>AI Analyze</span>
-                </button>
-                <button
-                  v-else-if="aiRec && !aiRecLoading"
-                  type="button"
-                  class="btn btn-subtle btn-sm advisor-trigger-btn"
-                  @click="loadAiRec"
-                >
-                  <svg class="btn-sparkle-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
-                  </svg>
-                  <span>Re-analyze</span>
-                </button>
               </div>
 
               <!-- Shimmer Loading Animation -->
@@ -1023,14 +1016,38 @@ watch(
                 </div>
               </div>
 
-              <!-- Idle Prompt -->
-              <p v-else-if="!aiRec" class="advisor-idle-text">
-                Get prioritized suggestions on measurement scaling, imputation strategy, and test readiness — aggregated data only, nothing leaves your device.
-              </p>
+              <!-- Idle Prompt with Preview Highlights -->
+              <div v-else-if="!aiRec" class="advisor-idle-card">
+                <p class="advisor-idle-text">
+                  Get prioritized suggestions on measurement scaling, imputation strategy, and test readiness &mdash; aggregated data only, nothing leaves your device.
+                </p>
+                <div class="advisor-preview-chips">
+                  <div class="advisor-preview-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                    </svg>
+                    <span>Scale validation</span>
+                  </div>
+                  <div class="advisor-preview-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 6v6l4 2" />
+                    </svg>
+                    <span>Imputation safety</span>
+                  </div>
+                  <div class="advisor-preview-chip">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    <span>Inferential models</span>
+                  </div>
+                </div>
+              </div>
 
-              <!-- Loaded Recommendations -->
+              <!-- Loaded Recommendations (Advisory Only) -->
               <div v-else class="advisor-results">
-                <div class="advisor-rec-card is-primary" @click="applyAiAction(aiRec.primary.target, aiRec.primary.cols?.[0])">
+                <div class="advisor-rec-card is-primary is-advisory">
                   <div class="rec-top-row">
                     <span v-if="aiRec.primary.cols?.length" class="rec-col-chip">{{ aiRec.primary.cols.join(', ') }}</span>
                     <span class="rec-conf-tag" :class="confClass(aiRec.primary.confidence)">{{ confLabel(aiRec.primary.confidence) }}</span>
@@ -1039,17 +1056,13 @@ watch(
                   <p v-if="aiRec.primary.reason || aiRec.primary.detail" class="rec-desc">
                     {{ aiRec.primary.reason || aiRec.primary.detail }}
                   </p>
-                  <div class="rec-action-link">
-                    <span>Review &rarr;</span>
-                  </div>
                 </div>
 
                 <div v-if="aiRec.secondary?.length" class="advisor-secondary-grid">
                   <div
                     v-for="(rec, idx) in aiRec.secondary"
                     :key="idx"
-                    class="advisor-rec-card"
-                    @click="applyAiAction(rec.target, rec.cols?.[0])"
+                    class="advisor-rec-card is-advisory"
                   >
                     <div class="rec-top-row">
                       <span v-if="rec.cols?.length" class="rec-col-chip">{{ rec.cols.join(', ') }}</span>
@@ -1057,12 +1070,129 @@ watch(
                     </div>
                     <h5 class="rec-title">{{ rec.title }}</h5>
                     <p v-if="rec.reason || rec.detail" class="rec-desc">{{ rec.reason || rec.detail }}</p>
-                    <div class="rec-action-link">
-                      <span>Review &rarr;</span>
+                  </div>
+                </div>
+                <p v-if="aiRec.error" class="advisor-error-note">{{ aiRec.error }}</p>
+              </div>
+            </div>
+
+            <!-- 3. Primary Audit Findings: Advisory diagnosis cards (Action is only in Stage 2) -->
+            <div v-if="visibleIssues.length || advisoryItems.length" class="dha-findings-row" :class="{ 'has-expanded': noticesExpanded || missingExpanded }">
+              <!-- Card 1: Column Notices (Expandable) -->
+              <div class="dha-finding-card is-notices" :class="{ 'is-expanded': noticesExpanded }">
+                <div class="finding-card-icon is-notices">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <div class="finding-card-body">
+                  <div class="dha-finding-title-row">
+                    <strong class="dha-finding-title">Column Notices</strong>
+                    <span class="dha-finding-count-badge" :class="{ 'is-warn': visibleIssues.length > 0 }">
+                      {{ visibleIssues.length }}
+                    </span>
+                    <button
+                      v-if="visibleIssues.length > 0"
+                      type="button"
+                      class="dha-expand-toggle-btn"
+                      :title="noticesExpanded ? 'Hide impacted columns' : 'Show impacted columns'"
+                      :aria-expanded="noticesExpanded"
+                      @click="noticesExpanded = !noticesExpanded"
+                    >
+                      <span>{{ noticesExpanded ? 'Hide' : 'Details' }}</span>
+                      <svg :class="{ 'is-rotated': noticesExpanded }" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p class="dha-finding-desc">
+                    {{ visibleIssues.length ? `${visibleIssues.length} issues on discrete codes, IDs, or outliers.` : 'All columns have appropriate measurement levels.' }}
+                  </p>
+                  <p v-if="visibleIssues.length" class="dha-finding-rec">
+                    <strong>Recommendation:</strong> Review variable scales, discrete codes, or outlier thresholds in Stage 2.
+                  </p>
+
+                  <!-- Impacted Columns Detail Drawer -->
+                  <div v-if="noticesExpanded && visibleIssues.length" class="dha-finding-impact-list">
+                    <div v-for="issue in visibleIssues" :key="issueKey(issue)" class="dha-impact-item">
+                      <div class="dha-impact-head">
+                        <code class="dha-impact-col-name">{{ issue.col }}</code>
+                        <span class="dha-impact-kind-tag">{{ formatIssueKind(issue.kind) }}</span>
+                      </div>
+                      <div class="dha-impact-body" :title="issue.evidence ? `${issue.message} (${issue.evidence})` : issue.message">
+                        <span class="dha-impact-msg">{{ issue.message }}</span>
+                        <span v-if="issue.evidence" class="dha-impact-evid">&middot; {{ issue.evidence }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <p v-if="aiRec.error" class="advisor-error-note">{{ aiRec.error }} <button type="button" class="btn-link-restore" @click="loadAiRec">Retry</button></p>
+              </div>
+
+              <!-- Card 2: Missing Data (Expandable) -->
+              <div class="dha-finding-card is-missing" :class="{ 'is-expanded': missingExpanded }">
+                <div class="finding-card-icon is-missing">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                    <line x1="12" y1="22.08" x2="12" y2="12"/>
+                  </svg>
+                </div>
+                <div class="finding-card-body">
+                  <div class="dha-finding-title-row">
+                    <strong class="dha-finding-title">Missing Data</strong>
+                    <span class="dha-finding-count-badge" :class="{ 'is-warn': totalMissingCells > 0 }">
+                      {{ totalMissingCells }} cells
+                    </span>
+                    <button
+                      v-if="advisoryItems.length > 0"
+                      type="button"
+                      class="dha-expand-toggle-btn"
+                      :title="missingExpanded ? 'Hide impacted columns' : 'Show impacted columns'"
+                      :aria-expanded="missingExpanded"
+                      @click="missingExpanded = !missingExpanded"
+                    >
+                      <span>{{ missingExpanded ? 'Hide' : 'Details' }}</span>
+                      <svg :class="{ 'is-rotated': missingExpanded }" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                  <p class="dha-finding-desc">
+                    {{ advisoryItems.length ? `${advisoryItems.length} columns have missing values across cases.` : 'Dataset is 100% complete across all columns.' }}
+                  </p>
+                  <p v-if="advisoryItems.length" class="dha-finding-rec">
+                    <strong>Recommendation:</strong> Impute with central tendency (median/mode) or drop cases in Stage 2.
+                  </p>
+
+                  <!-- Impacted Columns Detail Drawer -->
+                  <div v-if="missingExpanded && advisoryItems.length" class="dha-finding-impact-list">
+                    <div v-for="item in advisoryItems" :key="item.name" class="dha-impact-item">
+                      <div class="dha-impact-head">
+                        <code class="dha-impact-col-name">{{ item.name }}</code>
+                        <span class="dha-impact-measure-tag">{{ item.measure }}</span>
+                      </div>
+                      <div class="dha-impact-body">
+                        <span class="dha-impact-msg">
+                          <strong>{{ item.missingN }}</strong> cell{{ item.missingN === 1 ? '' : 's' }} ({{ item.missingPct }}%)
+                        </span>
+                        <span class="dha-impact-evid">&middot; Suggested: {{ strategyLabel(item.recommendedMethod) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="dha-clean-bar">
+              <div class="clean-check-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <div class="clean-check-text">
+                <strong>Dataset looks clean</strong>
+                <span>All variables properly measured with zero unhandled missing cells.</span>
               </div>
             </div>
           </template>
@@ -1097,7 +1227,7 @@ watch(
           </div>
 
           <!-- Group 1: Measurement Scales & Types -->
-          <details v-if="scaleIssues.length" open class="review-issue-group">
+          <details v-if="scaleIssues.length" open class="review-issue-group is-scales">
             <summary class="review-group-summary">
               <div class="review-group-title">
                 <strong>Measurement Scales &amp; Types</strong>
@@ -1129,7 +1259,9 @@ watch(
                   aria-label="Dismiss issue"
                   @click="dismissIssue(issue)"
                 >
-                  &times;
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
                 <div class="dha-card-head-content">
                   <span class="dha-col-chip">{{ issue.col }}</span>
@@ -1140,9 +1272,23 @@ watch(
                   <p class="dha-diag-text"><span class="dha-meta-label">Observed:</span> {{ issue.evidence }} &mdash; {{ plainFor(issue).plain }}</p>
                   <p class="dha-action-text"><span class="dha-meta-label">Resolution:</span> {{ fixLineFor(issue) }}</p>
                 </div>
-                <details v-if="whyFor(issue)" class="dha-why">
-                  <summary>Statistical rationale</summary>
-                  <p>{{ whyFor(issue) }}</p>
+                <details v-if="whyFor(issue)" class="dha-rationale-box">
+                  <summary class="dha-rationale-trigger">
+                    <div class="dha-rationale-trigger-content">
+                      <svg class="dha-rationale-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span class="dha-rationale-trigger-title">Statistical Rationale</span>
+                    </div>
+                    <svg class="dha-rationale-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  <div class="dha-rationale-body">
+                    {{ whyFor(issue) }}
+                  </div>
                 </details>
                 <div class="dha-actions">
                   <button
@@ -1153,7 +1299,10 @@ watch(
                     :disabled="isStaged(issue)"
                     @click="stageQuality(issue)"
                   >
-                    {{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}
+                    <svg v-if="isStaged(issue)" class="btn-check-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}</span>
                   </button>
                   <span v-else class="quality-fix-note">Manual label in Variable View</span>
                 </div>
@@ -1162,7 +1311,7 @@ watch(
           </details>
 
           <!-- Group 2: Missing Values & Imputation -->
-          <details v-if="visibleAdvisoryItems.length" open class="review-issue-group">
+          <details v-if="visibleAdvisoryItems.length" open class="review-issue-group is-missing">
             <summary class="review-group-summary">
               <div class="review-group-title">
                 <strong>Missing Values &amp; Imputation</strong>
@@ -1194,7 +1343,9 @@ watch(
                   aria-label="Dismiss missing fill"
                   @click="dismissMissing(item.name)"
                 >
-                  &times;
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
                 <div class="dha-card-head-content">
                   <span class="dha-col-chip">{{ item.name }}</span>
@@ -1209,6 +1360,24 @@ watch(
                     <span class="dha-meta-label">Resolution:</span> {{ computeFillPreview(item) }}.
                   </p>
                 </div>
+                <details v-if="item.rationaleReason" class="dha-rationale-box">
+                  <summary class="dha-rationale-trigger">
+                    <div class="dha-rationale-trigger-content">
+                      <svg class="dha-rationale-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span class="dha-rationale-trigger-title">Statistical Rationale</span>
+                    </div>
+                    <svg class="dha-rationale-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  <div class="dha-rationale-body">
+                    {{ item.rationaleReason }}
+                  </div>
+                </details>
                 <div class="dha-strategy-action-bar">
                   <div class="dha-strategy-field">
                     <label :for="`strategy-${item.name}`" class="dha-strategy-label">Strategy</label>
@@ -1255,7 +1424,10 @@ watch(
                     :disabled="isImputeStaged(item)"
                     @click="stageImpute(item)"
                   >
-                    {{ isImputeStaged(item) ? 'Staged' : 'Stage Fix' }}
+                    <svg v-if="isImputeStaged(item)" class="btn-check-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{{ isImputeStaged(item) ? 'Staged' : 'Stage Fix' }}</span>
                   </button>
                 </div>
               </article>
@@ -1263,7 +1435,7 @@ watch(
           </details>
 
           <!-- Group 3: Data Integrity & Outliers -->
-          <details v-if="integrityIssues.length" open class="review-issue-group">
+          <details v-if="integrityIssues.length" open class="review-issue-group is-integrity">
             <summary class="review-group-summary">
               <div class="review-group-title">
                 <strong>Data Integrity &amp; Outliers</strong>
@@ -1295,7 +1467,9 @@ watch(
                   aria-label="Dismiss issue"
                   @click="dismissIssue(issue)"
                 >
-                  &times;
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
                 <div class="dha-card-head-content">
                   <span class="dha-col-chip">{{ issue.col }}</span>
@@ -1306,9 +1480,23 @@ watch(
                   <p class="dha-diag-text"><span class="dha-meta-label">Observed:</span> {{ issue.evidence }} &mdash; {{ plainFor(issue).plain }}</p>
                   <p class="dha-action-text"><span class="dha-meta-label">Resolution:</span> {{ fixLineFor(issue) }}</p>
                 </div>
-                <details v-if="whyFor(issue)" class="dha-why">
-                  <summary>Statistical rationale</summary>
-                  <p>{{ whyFor(issue) }}</p>
+                <details v-if="whyFor(issue)" class="dha-rationale-box">
+                  <summary class="dha-rationale-trigger">
+                    <div class="dha-rationale-trigger-content">
+                      <svg class="dha-rationale-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span class="dha-rationale-trigger-title">Statistical Rationale</span>
+                    </div>
+                    <svg class="dha-rationale-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  <div class="dha-rationale-body">
+                    {{ whyFor(issue) }}
+                  </div>
                 </details>
                 <div class="dha-actions">
                   <button
@@ -1319,7 +1507,10 @@ watch(
                     :disabled="isStaged(issue)"
                     @click="stageQuality(issue)"
                   >
-                    {{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}
+                    <svg v-if="isStaged(issue)" class="btn-check-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}</span>
                   </button>
                   <span v-else class="quality-fix-note">Review manually</span>
                 </div>
@@ -1328,7 +1519,7 @@ watch(
           </details>
 
           <!-- Group 4: Structural Noise & Identifiers -->
-          <details v-if="structuralIssues.length" open class="review-issue-group">
+          <details v-if="structuralIssues.length" open class="review-issue-group is-structural">
             <summary class="review-group-summary">
               <div class="review-group-title">
                 <strong>Structural Noise &amp; Identifiers</strong>
@@ -1360,7 +1551,9 @@ watch(
                   aria-label="Dismiss issue"
                   @click="dismissIssue(issue)"
                 >
-                  &times;
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
                 <div class="dha-card-head-content">
                   <span class="dha-col-chip">{{ issue.col }}</span>
@@ -1371,9 +1564,23 @@ watch(
                   <p class="dha-diag-text"><span class="dha-meta-label">Observed:</span> {{ issue.evidence }} &mdash; {{ plainFor(issue).plain }}</p>
                   <p class="dha-action-text"><span class="dha-meta-label">Resolution:</span> {{ fixLineFor(issue) }}</p>
                 </div>
-                <details v-if="whyFor(issue)" class="dha-why">
-                  <summary>Statistical rationale</summary>
-                  <p>{{ whyFor(issue) }}</p>
+                <details v-if="whyFor(issue)" class="dha-rationale-box">
+                  <summary class="dha-rationale-trigger">
+                    <div class="dha-rationale-trigger-content">
+                      <svg class="dha-rationale-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span class="dha-rationale-trigger-title">Statistical Rationale</span>
+                    </div>
+                    <svg class="dha-rationale-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  <div class="dha-rationale-body">
+                    {{ whyFor(issue) }}
+                  </div>
                 </details>
                 <div class="dha-actions">
                   <button
@@ -1384,7 +1591,10 @@ watch(
                     :disabled="isStaged(issue)"
                     @click="stageQuality(issue)"
                   >
-                    {{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}
+                    <svg v-if="isStaged(issue)" class="btn-check-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}</span>
                   </button>
                   <span v-else class="quality-fix-note">Review manually</span>
                 </div>
@@ -1393,7 +1603,7 @@ watch(
           </details>
 
           <!-- Group 5: Other Issues -->
-          <details v-if="otherIssues.length" open class="review-issue-group">
+          <details v-if="otherIssues.length" open class="review-issue-group is-other">
             <summary class="review-group-summary">
               <div class="review-group-title">
                 <strong>Other Observations</strong>
@@ -1425,7 +1635,9 @@ watch(
                   aria-label="Dismiss issue"
                   @click="dismissIssue(issue)"
                 >
-                  &times;
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
                 <div class="dha-card-head-content">
                   <span class="dha-col-chip">{{ issue.col }}</span>
@@ -1436,6 +1648,24 @@ watch(
                   <p class="dha-diag-text"><span class="dha-meta-label">Observed:</span> {{ issue.evidence }} &mdash; {{ plainFor(issue).plain }}</p>
                   <p class="dha-action-text"><span class="dha-meta-label">Resolution:</span> {{ fixLineFor(issue) }}</p>
                 </div>
+                <details v-if="whyFor(issue)" class="dha-rationale-box">
+                  <summary class="dha-rationale-trigger">
+                    <div class="dha-rationale-trigger-content">
+                      <svg class="dha-rationale-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      <span class="dha-rationale-trigger-title">Statistical Rationale</span>
+                    </div>
+                    <svg class="dha-rationale-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  <div class="dha-rationale-body">
+                    {{ whyFor(issue) }}
+                  </div>
+                </details>
                 <div class="dha-actions">
                   <button
                     v-if="issue.fix"
@@ -1445,7 +1675,10 @@ watch(
                     :disabled="isStaged(issue)"
                     @click="stageQuality(issue)"
                   >
-                    {{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}
+                    <svg v-if="isStaged(issue)" class="btn-check-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{{ isStaged(issue) ? 'Staged' : 'Stage Fix' }}</span>
                   </button>
                 </div>
               </article>
@@ -1457,13 +1690,6 @@ watch(
         <section v-else-if="step === 3" aria-label="Step 3: Apply">
           <!-- Pending Staged Changes Section -->
           <template v-if="stagedQuality.length || stagedImputes.length">
-            <div class="manifest-safety-note">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <span><strong>Safe Preview:</strong> Changes are staged in memory. They will not mutate your dataset until confirmed. Revert anytime with <code>Ctrl+Z</code>.</span>
-            </div>
-
             <div class="dha-section-header-row">
               <div>
                 <h4 class="dha-section-title">Pre-Flight Change Manifest ({{ stagedQuality.length + stagedImputes.length }})</h4>
@@ -1516,7 +1742,9 @@ watch(
                         aria-label="Remove change"
                         @click="removeStaged(issueKey(s.issue))"
                       >
-                        &times;
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
                       </button>
                     </td>
                   </tr>
@@ -1539,7 +1767,9 @@ watch(
                         aria-label="Remove change"
                         @click="removeStagedImpute(s.name)"
                       >
-                        &times;
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
                       </button>
                     </td>
                   </tr>
@@ -1591,7 +1821,7 @@ watch(
                 <div class="dha-impact-metric-row">
                   <span class="dha-impact-metric">{{ activeActionsCount }} change{{ activeActionsCount === 1 ? '' : 's' }} applied</span>
                 </div>
-                <span class="dha-impact-sub">{{ rowsTouched.toLocaleString() }} cells updated · Full Ctrl+Z rollback supported</span>
+                <span class="dha-impact-sub">{{ rowsTouched.toLocaleString() }} cells updated</span>
               </div>
             </div>
 
@@ -1633,26 +1863,6 @@ watch(
                 </div>
               </div>
             </div>
-
-            <!-- Handover Bridge to Test Advisor -->
-            <div class="handover-bridge-card">
-              <div class="handover-bridge-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-                </svg>
-              </div>
-              <div class="handover-bridge-text">
-                <h5 class="handover-bridge-title">Ready for Statistical Analysis</h5>
-                <p class="handover-bridge-desc">Your dataset is clean and calibrated. Launch the Statistical Test Advisor to explore research hypotheses and inferential models.</p>
-              </div>
-              <button
-                type="button"
-                class="btn btn-primary btn-sm handover-bridge-btn"
-                @click="openTestAdvisor()"
-              >
-                Explore Statistical Tests &rarr;
-              </button>
-            </div>
           </template>
 
           <!-- Empty State (No staged changes and no past activity) -->
@@ -1664,9 +1874,11 @@ watch(
         </section>
       </div>
 
-      <div class="modal-footer">
+      <div class="modal-footer dha-footer-simple">
         <div class="modal-footer-left">
-          <button class="btn btn-subtle" type="button" :disabled="step === 1" @click="goStep(step - 1)">← Back</button>
+          <button v-if="step > 1" class="btn btn-subtle" type="button" @click="goStep(step - 1)">
+            &larr; Back
+          </button>
           <button
             v-if="step === 3 && (stagedQuality.length || stagedImputes.length)"
             type="button"
@@ -1676,8 +1888,42 @@ watch(
             Clear Staged
           </button>
         </div>
+
+        <!-- Center Stepper Strip (Clean & Polished Segmented Control) -->
+        <nav class="dha-footer-stepper" aria-label="Workflow progress" aria-live="polite" @keydown="stepKeyNav">
+          <template v-for="(s, idx) in STEPS" :key="s.n">
+            <div v-if="idx > 0" class="dha-step-separator" aria-hidden="true">
+              <svg class="dha-step-sep-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </div>
+            <button
+              type="button"
+              class="dha-footer-step-btn"
+              :class="{ 'is-done': step > s.n, 'is-current': step === s.n }"
+              :tabindex="step === s.n ? 0 : -1"
+              :aria-current="step === s.n ? 'step' : undefined"
+              :aria-label="`${s.label}. ${s.hint}`"
+              :title="`${s.label} — ${s.hint}`"
+              @click="goStep(s.n)"
+            >
+              <svg v-if="step > s.n" class="dha-step-check" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <span class="dha-footer-step-label">{{ s.label }}</span>
+              <span v-if="s.n === 2 && stagedCount > 0" class="dha-footer-step-badge">{{ stagedCount }}</span>
+              <span v-else-if="s.n === 3 && activeActionsCount > 0" class="dha-footer-step-badge is-applied">{{ activeActionsCount }}</span>
+            </button>
+          </template>
+        </nav>
+
         <div class="modal-footer-right">
-          <button v-if="step < 3" class="btn btn-primary" type="button" @click="goStep(step + 1)">{{ step === 1 ? 'Stage fixes →' : 'Review summary →' }}</button>
+          <button v-if="step === 1" class="btn btn-primary" type="button" @click="goStep(2)">
+            {{ visibleIssues.length || advisoryItems.length ? 'Stage fixes →' : 'Review details →' }}
+          </button>
+          <button v-else-if="step === 2" class="btn btn-primary" type="button" @click="goStep(3)">
+            {{ stagedCount > 0 ? `Apply staged (${stagedCount}) →` : 'Proceed to Apply →' }}
+          </button>
           <button
             v-else-if="stagedQuality.length || stagedImputes.length"
             class="btn btn-primary"
@@ -1686,7 +1932,9 @@ watch(
           >
             Commit &amp; Apply All ({{ stagedCount }})
           </button>
-          <button v-else class="btn btn-primary" type="button" @click="close">Done</button>
+          <button v-else class="btn btn-primary" type="button" @click="close">
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -1694,79 +1942,268 @@ watch(
 </template>
 
 <style scoped>
-.dha-step-count {
+/* App icon in dialog header - seamlessly blended with modal header */
+.dha-title-icon-wrap {
   display: flex;
   align-items: center;
-  /* Subheader sits between header and scrolling body; never let it compress. */
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+}
+
+.dha-app-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 2px 8px rgba(35, 103, 236, 0.45));
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.dha-title-icon-wrap:hover .dha-app-icon {
+  transform: scale(1.08);
+  filter: drop-shadow(0 3px 12px rgba(35, 103, 236, 0.65));
+}
+
+/* Expandable Impact Details inside Cards */
+.dha-expand-toggle-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dha-expand-toggle-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.dha-expand-toggle-btn svg {
+  transition: transform 0.2s ease;
+}
+
+.dha-expand-toggle-btn svg.is-rotated {
+  transform: rotate(180deg);
+}
+
+.dha-finding-impact-list {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+
+.dha-impact-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line-subtle);
+  font-size: 11px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.dha-impact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
-.dha-dot-badge {
-  flex-shrink: 0;
-  min-width: 16px;
-  padding: 0 5px;
-  border-radius: 999px;
+
+.dha-impact-col-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.dha-impact-kind-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.dha-impact-measure-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-  line-height: 16px;
+  text-transform: capitalize;
+  white-space: nowrap;
 }
-.dha-dot {
+
+.dha-impact-body {
   display: flex;
   align-items: center;
-  gap: 7px;
-  background: none;
-  border: 0;
-  padding: 4px 8px;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--ink);
-  font: inherit;
-  transition: background 0.15s ease;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
-.dha-dot:hover, .dha-dot:focus-visible { background: var(--surface-hover); }
-.dha-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dha-dot-circle {
+
+.dha-impact-msg {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+.dha-impact-evid {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+/* Polished & Simpler Workflow Footer */
+.dha-footer-simple {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+}
+
+.dha-footer-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 6px;
+  user-select: none;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+}
+
+.dha-step-separator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid var(--line-strong);
-  background: var(--surface);
   color: var(--faint);
+  opacity: 0.55;
+  user-select: none;
+  pointer-events: none;
+  padding: 0 1px;
+}
+
+.dha-step-sep-icon {
+  display: block;
+}
+
+.dha-footer-step-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  transition: all 0.15s ease;
+}
+
+.dha-footer-step-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.dha-footer-step-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dha-footer-step-btn.is-current {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.dha-footer-step-btn.is-done {
+  color: var(--text-secondary);
+}
+
+.dha-step-check {
+  color: var(--ok, #10b981);
+  flex-shrink: 0;
+  display: block;
+}
+
+.dha-footer-step-label {
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.dha-footer-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: 9.5px;
   font-weight: 700;
   line-height: 1;
-  transition: all 0.15s ease;
 }
-.dha-dot.is-current .dha-dot-circle {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+
+.dha-footer-step-badge.is-applied {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--ok, #10b981);
 }
-.dha-dot.is-done .dha-dot-circle {
-  border-color: var(--accent);
-  background: transparent;
-  color: var(--accent);
+
+.btn-check-icon {
+  margin-right: 3px;
+  vertical-align: middle;
 }
-.dha-connector {
-  width: 22px;
-  height: 1.5px;
-  border-radius: 1px;
-  background: var(--line);
-  transition: background 0.15s ease;
-}
-.dha-connector.is-done { background: var(--accent); }
-.dha-dot-label { font-size: 11px; color: var(--faint); transition: color 0.15s ease; }
-.dha-dot.is-current .dha-dot-label { color: var(--ink); font-weight: 600; }
-.dha-dot.is-done .dha-dot-label { color: var(--muted); }
 
 .modal-body {
+  overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
@@ -1783,5 +2220,95 @@ watch(
 }
 .modal-body::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
+}
+
+/* Polished Card Summary & Diagnostic Text */
+.dha-card-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.dha-diag-text,
+.dha-action-text {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.dha-meta-label {
+  font-weight: 700;
+  color: var(--text);
+  margin-right: 4px;
+}
+
+/* Redesigned & Polished Statistical Rationale */
+.dha-rationale-box {
+  margin-top: 6px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--line-subtle);
+  background: var(--surface-subtle);
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+
+.dha-rationale-box[open] {
+  border-color: rgba(74, 158, 255, 0.28);
+  background: rgba(35, 103, 236, 0.04);
+}
+
+.dha-rationale-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.dha-rationale-trigger::-webkit-details-marker,
+.dha-rationale-trigger::marker {
+  display: none;
+}
+
+.dha-rationale-trigger:hover {
+  background: var(--surface-hover);
+}
+
+.dha-rationale-trigger-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dha-rationale-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.dha-rationale-chevron {
+  color: var(--faint);
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.dha-rationale-box[open] .dha-rationale-chevron {
+  transform: rotate(180deg);
+}
+
+.dha-rationale-body {
+  padding: 6px 10px 9px 27px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+  border-top: 1px solid rgba(74, 158, 255, 0.12);
 }
 </style>

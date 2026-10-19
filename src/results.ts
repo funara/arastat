@@ -2,7 +2,7 @@
 // keyed by address, patched in place from the analysis/update stream.
 import { reactive } from 'vue'
 import { isRecord } from './guard.ts'
-
+import { state, showValueLabels } from './store.ts'
 export type ElementStatus = 'ok' | 'stale' | 'error'
 
 export interface ResultTable {
@@ -52,6 +52,7 @@ export interface Run {
   createdAt: number
   startTime: number
   revealed: boolean
+  datasetRev?: number
 }
 
 
@@ -128,7 +129,7 @@ export function startRun(runId: string, analysisId: string, title: string, spec:
   const run: Run = {
     runId, analysisId, title, spec: { ...spec }, missingPolicy,
     status: 'loading', elements: [], lastSeq: 0, fresh: false, createdAt: Date.now(),
-    startTime: Date.now(), revealed: false
+    startTime: Date.now(), revealed: false, datasetRev: state.rev
   }
   runsState.runs.push(run)
   loadingState.active = true
@@ -148,6 +149,7 @@ export function markStale(runId: string): void {
   run.status = 'loading'
   run.fresh = false
   run.startTime = Date.now()
+  run.datasetRev = state.rev
   // A rerun reuses the runId but the engine restarts patch seq at 1: without
   // this reset every fresh patch would be dropped as stale (seq <= lastSeq).
   run.lastSeq = 0
@@ -167,6 +169,51 @@ export function flagStale(analysisId: string, spec: Record<string, unknown>): vo
     if (el.kind !== 'error') el.status = 'stale'
   }
   run.fresh = false
+}
+
+/**
+ * Display-only value labels (Phase 12): map coded stubs like `0` to
+ * `Control (0)` using the dataset's `ColumnMeta.valueLabels`. Stored rows
+ * stay raw so engine payloads and golden stats are untouched.
+ */
+export function displayTable(el: ResultTable, run: Run): ResultTable {
+  const lab = (col: string | undefined, v: unknown): unknown => {
+    if (!showValueLabels.value) return v
+    if (col === undefined) return v
+    const hit = state.ds.columns.find((c) => c.name === col)?.valueLabels?.[String(v)]
+    return hit ? `${hit} (${String(v)})` : v
+  }
+  const col0 = (rows: unknown[][], col: string | undefined, extra?: string): unknown[][] =>
+    rows.map((r) => r.map((v, ci) => {
+      if (ci === 0) return lab(col, v)
+      if (extra !== undefined && ci === 1) return lab(extra, v)
+      return v
+    }))
+  const spec = run.spec
+  const str = (k: string): string | undefined => (typeof spec[k] === 'string' ? (spec[k] as string) : undefined)
+  let columns = el.columns
+  let rows = el.rows
+  if (run.analysisId === 'frequencies') {
+    const vars = Array.isArray(spec['variables']) ? (spec['variables'] as unknown[]).map(String) : []
+    const name = vars[(Number(/\/table\/(\d+)$/.exec(el.address)?.[1]) || 1) - 1]
+    if (name) rows = col0(rows, name)
+  } else if (run.analysisId === 'chisq_gof') {
+    const name = str('variable')
+    if (name) rows = col0(rows, name)
+  } else if (run.analysisId === 'chisq_independence') {
+    const row = str('row')
+    const col = str('col')
+    if (row) rows = rows.map((r) => r.map((v, ci) => (ci === 0 ? lab(row, v) : v)))
+    if (col) columns = columns.map((c, i) => (i === 0 ? c : String(lab(col, c) ?? c)))
+  } else {
+    const group = str('group') ?? str('factor')
+    if (group && el.columns[0] === 'Group') rows = col0(rows, group)
+    else if (group && el.columns[0] === 'Group 1' && el.columns[1] === 'Group 2') {
+      rows = col0(rows, group, group)
+    }
+  }
+  if (rows === el.rows && columns === el.columns) return el
+  return { ...el, columns, rows }
 }
 
 /** Local failure (invoke rejection): an error element when the run has none. */
@@ -233,7 +280,8 @@ export function pinChartElement(caption: string, svg: string): string {
     fresh: true,
     createdAt: Date.now(),
     startTime: Date.now(),
-    revealed: true
+    revealed: true,
+    datasetRev: state.rev
   })
   return runId
 }
@@ -244,7 +292,7 @@ export function snapshotRuns(): unknown {
     runs: runsState.runs.map((r) => ({
       runId: r.runId, analysisId: r.analysisId, title: r.title,
       spec: r.spec, missingPolicy: r.missingPolicy, status: r.status,
-      elements: r.elements
+      elements: r.elements, datasetRev: r.datasetRev
     }))
   }
 }
@@ -267,7 +315,7 @@ export function restoreRuns(raw: unknown): void {
       missingPolicy: typeof item['missingPolicy'] === 'string' ? item['missingPolicy'] : 'listwise',
       status: item['status'] === 'done' ? 'done' : 'error',
       elements, lastSeq: 0, fresh: false, createdAt: Date.now(),
-      startTime: Date.now(), revealed: true
+      startTime: Date.now(), revealed: true, datasetRev: state.rev
     })
     const m = /^run(\d+)$/.exec(item['runId'] as string)
     if (m) nextRun = Math.max(nextRun, Number(m[1]) + 1)

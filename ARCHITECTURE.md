@@ -60,8 +60,8 @@ arastat/
 │   │   ├── pipeline.py              # Input validation, listwise/pairwise policy, element builder
 │   │   ├── statslib.py              # Pure NumPy/SciPy statistical implementations
 │   │   ├── charts.py                # Deterministic inline SVG chart generators
-│   │   └── errors.py                # Structured error codes (1001–1005)
-│   └── generate_fixtures.py         # Deterministic golden fixture generator
+│   │   ├── errors.py                # Structured error codes (1001–1005)
+│   │   └── fixtures.py              # Deterministic golden fixture generator (`ara_engine.fixtures`)
 ├── src/                             # Flat Vite + Vue 3 frontend root
 │   ├── index.html                   # Strict CSP entry HTML
 │   ├── main.ts                      # App bootstrap (installs tauri-shim before mounting Vue)

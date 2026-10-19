@@ -373,8 +373,8 @@ function onPlotRequest(colName: string): void {
           :aria-label="advisorTitle"
           @click="openAdvisorAll"
         >
-          <svg class="advisor-sparkle-icon" width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
+          <svg class="advisor-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
           <span class="advisor-btn-text">Health</span>
           <span v-if="badgeN > 0" class="advisor-badge" :class="hasDatasetCriticalErr ? 'is-err' : 'is-warn'">{{ badgeN }}</span>
@@ -388,7 +388,7 @@ function onPlotRequest(colName: string): void {
           aria-label="Statistical Test Advisor"
           @click="emit('open-test-advisor')"
         >
-          <svg class="advisor-sparkle-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="advisor-btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="20" x2="18" y2="10"/>
             <line x1="12" y1="20" x2="12" y2="4"/>
             <line x1="6" y1="20" x2="6" y2="14"/>

@@ -22,6 +22,7 @@ export const state = reactive({
   view: 'data' as 'data' | 'variable',
   sample: false,
   filename: '' as string,
+  rev: 0,
   // Formulas behind AI-gated computed columns. ponytail: the list is append-only, the
   // inverse-event stack covers the columns themselves; tie formulas into the stack if
   // undo must drop them too.
@@ -95,6 +96,7 @@ export function apply(ev: UiEvent): void {
       state.ds = clone(ev.next)
       break
   }
+  state.rev++
 }
 
 export function commit(ev: UiEvent): void {
@@ -365,7 +367,7 @@ export function clearHistory(): void {
 
 export function setDataset(ds: ColumnarDataset): void {
   commit({ t: 'dataset', prev: clone(state.ds), next: clone(ds) })
-  state.sample = false
+  state.sample = ds.sample ?? false
 }
 
 export const rowCount = computed(() => {

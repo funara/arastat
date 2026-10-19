@@ -147,8 +147,8 @@ npm test
 npm run test:rust
 
 # Regenerate the tier-2 reference fixtures (writes tests/fixtures/tier2)
-engine/.venv/Scripts/python.exe engine/generate_fixtures.py   # Windows
-engine/.venv/bin/python engine/generate_fixtures.py          # macOS / Linux
+engine/.venv/Scripts/python.exe engine/ara_engine/fixtures.py   # Windows
+engine/.venv/bin/python engine/ara_engine/fixtures.py          # macOS / Linux
 ```
 
 ### Updater signing keys

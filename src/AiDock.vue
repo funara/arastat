@@ -3,7 +3,7 @@
 // Parity with ARA Office Copilot: thinking steps, process cards, confirm gate,
 // two-way results explanation, and collapsible rail sidebar.
 // Single unified model with backend fallback.
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { state, addColumn } from './store.ts'
 import { schemaById, specSummary } from './specs.ts'
 import { runAnalysis } from './runAnalysis.ts'
@@ -65,7 +65,32 @@ const draft = ref('')
 const busy = ref(false)
 const pending = ref<PendingMutation | null>(null)
 const scrollEl = ref<HTMLElement | null>(null)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
 let nextId = 1
+
+const datasetSummary = computed(() => {
+  const cols = state.ds.columns.length
+  if (cols === 0) return null
+  const firstCol = state.ds.columns[0]
+  const rows = firstCol ? (state.ds.data[firstCol.name]?.length ?? 0) : 0
+  const name = state.filename ? state.filename.replace(/\.[^/.]+$/, '') : 'Untitled'
+  return { name, cols, rows }
+})
+
+function onTextareaInput(ev: Event): void {
+  const el = ev.target as HTMLTextAreaElement
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(96, Math.max(22, el.scrollHeight))}px`
+}
+
+function handleComposerKeydown(ev: KeyboardEvent): void {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault()
+    if (draft.value.trim() && !busy.value) {
+      void sendPrompt()
+    }
+  }
+}
 
 function clear(): void {
   messages.value = [
@@ -77,6 +102,10 @@ function clear(): void {
   ]
   pending.value = null
   nextId = 1
+  draft.value = ''
+  if (textareaRef.value) {
+    textareaRef.value.style.height = '22px'
+  }
 }
 
 function copyMessage(text: string): void {
@@ -92,10 +121,20 @@ function scrollDown(): void {
 }
 
 function errText(err: unknown): string {
+  if (isRecord(err) && typeof err['userMessage'] === 'string' && err['userMessage']) {
+    return err['userMessage']
+  }
   const raw = isRecord(err) && typeof err['message'] === 'string' && err['message']
     ? (err['message'] as string)
     : err instanceof Error && err.message ? err.message : ''
-  return raw || 'The AI service is temporarily unavailable. Try again.'
+  if (!raw) return 'Unable to reach the AI model. Check your connection or AI Settings.'
+  if (raw.includes('401') || raw.toLowerCase().includes('api key')) {
+    return 'Invalid or missing API key. Please update your key in AI Settings (⚙).'
+  }
+  if (raw.toLowerCase().includes('connect') || raw.toLowerCase().includes('econnrefused')) {
+    return 'Cannot reach local model server. Ensure Ollama or LM Studio is running.'
+  }
+  return raw
 }
 
 function handleAiError(err: unknown): void {
@@ -381,12 +420,30 @@ function getDatasetContext(): string {
 async function sendPrompt(customText?: string): Promise<void> {
   const text = (customText ?? draft.value).trim()
   if (!text || busy.value) return
-  if (!customText) draft.value = ''
+  if (!customText) {
+    draft.value = ''
+    if (textareaRef.value) {
+      textareaRef.value.style.height = '22px'
+    }
+  }
 
   messages.value.push({ id: nextId++, who: 'user', text })
   busy.value = true
   emit('status-change', 'busy')
   scrollDown()
+
+  if (typeof window === 'undefined' || !window.ara?.ai?.chat) {
+    messages.value.push({
+      id: nextId++,
+      who: 'bot',
+      text: 'AI Assistant requires the ARAStat desktop app with a configured model. Open Settings (⚙) to configure your AI provider (Gemini, OpenAI, or local Ollama / LM Studio).',
+      error: true
+    })
+    emit('status-change', 'error')
+    busy.value = false
+    scrollDown()
+    return
+  }
 
   try {
     const datasetCtx = getDatasetContext()
@@ -544,6 +601,19 @@ async function explainRun(run: Run): Promise<void> {
   emit('status-change', 'busy')
   scrollDown()
 
+  if (typeof window === 'undefined' || !window.ara?.ai?.chat) {
+    messages.value.push({
+      id: nextId++,
+      who: 'bot',
+      text: 'AI Assistant requires the ARAStat desktop app with a configured model. Open Settings (⚙) to configure your AI provider.',
+      error: true
+    })
+    emit('status-change', 'error')
+    busy.value = false
+    scrollDown()
+    return
+  }
+
   try {
     const replyRaw = await window.ara.ai.chat([
       {
@@ -634,8 +704,9 @@ defineExpose({
       @click="open = true"
     >
       <span class="ai-rail-icon" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          <path d="M8 10h.01M12 10h.01M16 10h.01"/>
         </svg>
       </span>
     </button>
@@ -644,11 +715,6 @@ defineExpose({
     <template v-else>
       <header class="pane-header ai-panel-header">
         <div class="ai-title-wrap">
-          <div class="ai-sparkle-squircle" aria-hidden="true">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="white">
-              <path d="M8 0c.7 4.5 3.5 7.3 8 8-4.5.7-7.3 3.5-8 8-.7-4.5-3.5-7.3-8-8 4.5-.7 7.3-3.5 8-8z" />
-            </svg>
-          </div>
           <span class="ai-head-title">ARA Assistant</span>
         </div>
 
@@ -702,142 +768,234 @@ defineExpose({
       </header>
 
       <div ref="scrollEl" class="chat-scroll" role="log" aria-label="ARA Assistant conversation">
-        <div v-if="!messages.length" class="chat-empty" role="status">
-          <strong>ARA Assistant is ready.</strong>
-          <span>Ask about your columns, statistical assumptions, or analyses.</span>
+        <!-- Empty / Welcome Hero Hub when no active conversation yet -->
+        <div v-if="messages.length <= 1" class="ai-welcome-hub">
+          <div class="ai-hub-header">
+            <div class="ai-hub-avatar ai-hub-app-icon-wrap" aria-hidden="true">
+              <img src="/icon.png" alt="ARA Assistant" class="ai-hub-app-icon" />
+            </div>
+            <h4 class="ai-hub-title">ARA Assistant</h4>
+            <p class="ai-hub-desc">Ask questions, verify assumptions, explore tests, or interpret statistical outputs.</p>
+
+            <div v-if="datasetSummary" class="ai-hub-context-pill" :title="`Active dataset: ${datasetSummary.name}`">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18M9 21V9" />
+              </svg>
+              <span><strong>{{ datasetSummary.name }}</strong> &middot; {{ datasetSummary.cols }} vars &middot; {{ datasetSummary.rows }} rows</span>
+            </div>
+          </div>
+
+          <div class="ai-quick-grid">
+            <button type="button" class="ai-quick-card" @click="sendPrompt('Summarize my variables')">
+              <span class="quick-card-icon">📋</span>
+              <div class="quick-card-text">
+                <strong class="quick-card-title">Summarize Variables</strong>
+                <span class="quick-card-sub">Central tendencies &amp; spreads</span>
+              </div>
+            </button>
+
+            <button type="button" class="ai-quick-card" @click="sendPrompt('Recommend a test for my data')">
+              <span class="quick-card-icon">🧭</span>
+              <div class="quick-card-text">
+                <strong class="quick-card-title">Recommend a Test</strong>
+                <span class="quick-card-sub">Map variables to optimal model</span>
+              </div>
+            </button>
+
+            <button type="button" class="ai-quick-card" @click="sendPrompt('Plot the distribution of my data')">
+              <span class="quick-card-icon">📊</span>
+              <div class="quick-card-text">
+                <strong class="quick-card-title">Plot Distribution</strong>
+                <span class="quick-card-sub">Histograms, bars &amp; scatters</span>
+              </div>
+            </button>
+
+            <button type="button" class="ai-quick-card" @click="sendPrompt('Check my data assumptions')">
+              <span class="quick-card-icon">🩺</span>
+              <div class="quick-card-text">
+                <strong class="quick-card-title">Check Assumptions</strong>
+                <span class="quick-card-sub">Normality, outliers &amp; variance</span>
+              </div>
+            </button>
+          </div>
         </div>
 
-        <div v-for="m in messages" :key="m.id" class="msg" :class="[m.who, { 'is-error': m.error }]">
-          <div class="who">{{ m.who === 'user' ? 'You' : 'ARA Assistant' }}</div>
-          <div class="bubble">
-            <!-- Collapsible Thinking Process -->
-            <details v-if="m.thinking" class="ai-thinking" open>
-              <summary>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+        <!-- Active Conversation Stream -->
+        <template v-else>
+          <div
+            v-for="m in messages.filter((msg) => msg.id !== 0)"
+            :key="m.id"
+            class="msg"
+            :class="[m.who, { 'is-error': m.error }]"
+          >
+            <div v-if="m.who === 'bot'" class="msg-bot-meta">
+              <div class="msg-bot-badge">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  <path d="M8 10h.01M12 10h.01M16 10h.01"/>
                 </svg>
-                <span>Thinking Process</span>
-              </summary>
-              <div class="thought-content">{{ m.thinking }}</div>
-            </details>
-
-            <span v-if="m.error" role="alert">{{ m.text }}</span>
-            <!-- Formatted Markdown Rendering -->
-            <div v-else class="ai-rendered-content" v-html="formatMarkdown(m.text)"></div>
-
-            <!-- Interactive Process Card -->
-            <div v-if="m.proposal" class="ai-process-card">
-              <div class="process-title">{{ schemaById(m.proposal.analysis)?.title ?? m.proposal.analysis }}</div>
-              <div class="process-spec-list">
-                <div class="spec-item">
-                  <span class="spec-key">Var</span>
-                  <code>{{ m.proposal.variables.join(', ') || 'Auto-select' }}</code>
-                </div>
-                <div v-if="proposalConf(m.proposal)" class="spec-item">
-                  <span class="spec-key">Conf</span>
-                  <span>{{ proposalConf(m.proposal) }}</span>
-                </div>
-                <div v-if="m.proposal.computedColumns?.length" class="spec-item">
-                  <span class="spec-key">Calc</span>
-                  <span>{{ m.proposal.computedColumns.join('; ') }}</span>
-                </div>
-                <div v-if="m.chart" class="spec-item">
-                  <span class="spec-key">Chart</span>
-                  <span>{{ m.chart.type }}: {{ m.chart.y ? `${m.chart.y} vs ${m.chart.x}` : m.chart.x }}{{ m.chart.group ? ` by ${m.chart.group}` : '' }}</span>
-                </div>
+                <span>ARA Assistant</span>
               </div>
-              <div class="process-actions">
-                <button class="btn btn-primary btn-sm" type="button" @click="runProposal(m)">
-                  Run Test
-                </button>
-                <button class="btn btn-sm" type="button" @click="emit('edit-options', { analysis: m.proposal!.analysis, options: { ...m.proposal!.options } })">
-                  Edit Options
-                </button>
-              </div>
-            </div>
-
-            <!-- Standalone/Integrated Visualization Recommendation Card -->
-            <div v-if="m.chart" class="ai-chart-card">
-              <div class="chart-card-header">
-                <span class="chart-type-tag">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="18" y1="20" x2="18" y2="10" />
-                    <line x1="12" y1="20" x2="12" y2="4" />
-                    <line x1="6" y1="20" x2="6" y2="14" />
-                  </svg>
-                  {{ (m.chart.type === 'hist' ? 'histogram' : m.chart.type).toUpperCase() }}
-                </span>
-                <span class="chart-card-title">
-                  {{ m.chart.y ? `${m.chart.y} vs ${m.chart.x}` : m.chart.x }}
-                  {{ m.chart.group ? `(by ${m.chart.group})` : '' }}
-                </span>
-              </div>
-              <div class="process-actions">
-                <button
-                  class="btn btn-primary btn-sm"
-                  type="button"
-                  @click="openChartInVisualizer(m.chart)"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
-                    <line x1="16" y1="5" x2="22" y2="5" />
-                    <line x1="22" y1="5" x2="14" y2="13" />
-                  </svg>
-                  Open in Visualizer
-                </button>
-              </div>
-            </div>
-
-            <!-- Narrative Note Insertion Button -->
-            <div v-if="m.narrativeNote && !m.narrativeInserted" style="margin-top: 10px;">
-              <button class="btn btn-primary btn-sm" type="button" @click="insertNoteIntoResults(m)">
-                + Insert Note into Results
-              </button>
-            </div>
-
-            <!-- Message Action Toolbar (Copy, hover-revealed) -->
-            <div v-if="m.who === 'bot' && !m.error" class="bubble-actions">
-              <button class="bubble-act-btn" type="button" title="Copy text" aria-label="Copy text" @click="copyMessage(m.text)">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <button class="msg-copy-btn" type="button" title="Copy response" aria-label="Copy response" @click="copyMessage(m.text)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                 </svg>
               </button>
             </div>
+            <div class="bubble">
+              <details v-if="m.thinking" class="ai-thinking" open>
+                <summary>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                  </svg>
+                  <span>Thinking Process</span>
+                </summary>
+                <div class="thought-content">{{ m.thinking }}</div>
+              </details>
 
-            <!-- Confirm Gate for dataset mutation -->
-            <div v-if="pending && m.id === pending.messageId" class="confirm-gate">
-              <div class="confirm-copy">
-                <span class="cg-icon" aria-hidden="true">!</span>
-                <strong>Confirm change</strong>: This will add {{ pending.columns }} computed columns to your active dataset. Apply?
+              <div v-if="m.error" class="ai-error-bubble" role="alert">
+                <div class="ai-error-text">{{ m.text }}</div>
+                <button
+                  class="btn btn-subtle btn-xs ai-error-btn"
+                  type="button"
+                  @click="emit('open-settings')"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                  </svg>
+                  <span>Open AI Settings</span>
+                </button>
               </div>
-              <div class="process-actions">
-                <button class="btn btn-primary btn-sm" type="button" @click="confirmMutation">Confirm</button>
-                <button class="btn btn-sm" type="button" @click="cancelMutation">Cancel</button>
+              <!-- Formatted Markdown Rendering -->
+              <div v-else class="ai-rendered-content" v-html="formatMarkdown(m.text)"></div>
+
+              <!-- Interactive Process Card -->
+              <div v-if="m.proposal" class="ai-process-card">
+                <div class="process-title">{{ schemaById(m.proposal.analysis)?.title ?? m.proposal.analysis }}</div>
+                <div class="process-spec-list">
+                  <div class="spec-item">
+                    <span class="spec-key">Var</span>
+                    <code>{{ m.proposal.variables.join(', ') || 'Auto-select' }}</code>
+                  </div>
+                  <div v-if="proposalConf(m.proposal)" class="spec-item">
+                    <span class="spec-key">Conf</span>
+                    <span>{{ proposalConf(m.proposal) }}</span>
+                  </div>
+                  <div v-if="m.proposal.computedColumns?.length" class="spec-item">
+                    <span class="spec-key">Calc</span>
+                    <span>{{ m.proposal.computedColumns.join('; ') }}</span>
+                  </div>
+                  <div v-if="m.chart" class="spec-item">
+                    <span class="spec-key">Chart</span>
+                    <span>{{ m.chart.type }}: {{ m.chart.y ? `${m.chart.y} vs ${m.chart.x}` : m.chart.x }}{{ m.chart.group ? ` by ${m.chart.group}` : '' }}</span>
+                  </div>
+                </div>
+                <div class="process-actions">
+                  <button class="btn btn-primary btn-sm" type="button" @click="runProposal(m)">
+                    Run Test
+                  </button>
+                  <button class="btn btn-sm" type="button" @click="emit('edit-options', { analysis: m.proposal!.analysis, options: { ...m.proposal!.options } })">
+                    Edit Options
+                  </button>
+                </div>
+              </div>
+
+              <!-- Standalone/Integrated Visualization Recommendation Card -->
+              <div v-if="m.chart" class="ai-chart-card">
+                <div class="chart-card-header">
+                  <span class="chart-type-tag">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="20" x2="18" y2="10" />
+                      <line x1="12" y1="20" x2="12" y2="4" />
+                      <line x1="6" y1="20" x2="6" y2="14" />
+                    </svg>
+                    {{ (m.chart.type === 'hist' ? 'histogram' : m.chart.type).toUpperCase() }}
+                  </span>
+                  <span class="chart-card-title">
+                    {{ m.chart.y ? `${m.chart.y} vs ${m.chart.x}` : m.chart.x }}
+                    {{ m.chart.group ? `(by ${m.chart.group})` : '' }}
+                  </span>
+                </div>
+                <div class="process-actions">
+                  <button
+                    class="btn btn-primary btn-sm"
+                    type="button"
+                    @click="openChartInVisualizer(m.chart)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
+                      <line x1="16" y1="5" x2="22" y2="5" />
+                      <line x1="22" y1="5" x2="14" y2="13" />
+                    </svg>
+                    Open in Visualizer
+                  </button>
+                </div>
+              </div>
+
+              <!-- Narrative Note Insertion Button -->
+              <div v-if="m.narrativeNote && !m.narrativeInserted" style="margin-top: 10px;">
+                <button class="btn btn-primary btn-sm" type="button" @click="insertNoteIntoResults(m)">
+                  + Insert Note into Results
+                </button>
+              </div>
+
+              <!-- Confirm Gate for dataset mutation -->
+              <div v-if="pending && m.id === pending.messageId" class="confirm-gate">
+                <div class="confirm-copy">
+                  <span class="cg-icon" aria-hidden="true">!</span>
+                  <strong>Confirm change</strong>: This will add {{ pending.columns }} computed columns to your active dataset. Apply?
+                </div>
+                <div class="process-actions">
+                  <button class="btn btn-primary btn-sm" type="button" @click="confirmMutation">Confirm</button>
+                  <button class="btn btn-sm" type="button" @click="cancelMutation">Cancel</button>
+                </div>
               </div>
             </div>
+          </div>
+        </template>
+
+        <div v-if="busy" class="msg bot ai-thinking-row">
+          <div class="msg-bot-meta">
+            <div class="msg-bot-badge">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                <path d="M8 10h.01M12 10h.01M16 10h.01"/>
+              </svg>
+              <span>ARA Assistant</span>
+            </div>
+          </div>
+          <div class="bubble ai-thinking-bubble">
+            <span class="ai-thinking-pulse" aria-hidden="true"></span>
+            <span class="ai-thinking-label">Analyzing dataset &amp; statistical assumptions</span>
+            <span class="ai-typing-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
           </div>
         </div>
       </div>
 
       <!-- Modern Composer -->
       <form class="chat-composer" @submit.prevent="sendPrompt()">
-        <div class="composer-row">
-          <input
+        <div class="composer-box">
+          <textarea
+            ref="textareaRef"
             v-model="draft"
-            type="text"
+            class="composer-textarea"
             placeholder="Ask ARA"
-            autocomplete="off"
+            rows="1"
             :disabled="busy"
-          />
+            @keydown="handleComposerKeydown"
+            @input="onTextareaInput"
+          ></textarea>
           <button
             class="composer-send-btn"
             type="submit"
             :disabled="busy || !draft.trim()"
-            title="Send"
+            title="Send (Enter)"
             aria-label="Send"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M12 19V5M5 12l7-7 7 7" />
             </svg>
           </button>

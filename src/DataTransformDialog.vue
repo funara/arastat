@@ -20,11 +20,11 @@ import { computeFill, rowsWithMissing, type FillMode } from './missing.ts'
 import { computeRecodeValues, type RecodeRule } from './transforms.ts'
 import { evalExprTokens, tokenizeExpr } from './expr.ts'
 
-export type TransformMode = 'compute' | 'transform' | 'sort-drop' | 'recode' | 'find'
+export type TransformMode = 'compute' | 'transform' | 'fill' | 'sort' | 'drop' | 'recode' | 'find'
 
 const props = withDefaults(
-  defineProps<{ open: boolean; mode?: TransformMode; column?: string; recodeNew?: boolean }>(),
-  { mode: 'compute', column: '', recodeNew: true }
+  defineProps<{ open: boolean; mode?: TransformMode; column?: string; recodeNew?: boolean; subOp?: 'log' | 'z' | 'bin' | 'fill' }>(),
+  { mode: 'compute', column: '', recodeNew: true, subOp: undefined }
 )
 
 const emit = defineEmits<{
@@ -61,6 +61,8 @@ watch(
     mode.value = props.mode
     status.value = ''
     recodeIntoNew.value = props.recodeNew
+    if (props.subOp === 'log' || props.subOp === 'z' || props.subOp === 'bin') transformKind.value = props.subOp === 'z' ? 'standardize' : props.subOp
+    if (props.subOp === 'fill' || props.mode === 'fill') fillMethod.value = 'mean'
     sourceCol.value =
       props.column && state.ds.columns.some((c) => c.name === props.column)
         ? props.column
@@ -101,22 +103,38 @@ function missingIn(name: string): (v: Cell) => boolean {
 const TABS: Array<{ id: TransformMode; label: string }> = [
   { id: 'compute', label: 'Compute' },
   { id: 'transform', label: 'Transform' },
+  { id: 'fill', label: 'Fill Missing' },
   { id: 'recode', label: 'Recode' },
-  { id: 'sort-drop', label: 'Sort & Filter' },
+  { id: 'sort', label: 'Sort Rows' },
+  { id: 'drop', label: 'Drop Missing Rows' },
   { id: 'find', label: 'Find' },
 ]
 
+/** Scoped tabs per menu category: find = single view, data = sort+drop, transform = compute+transform+fill+recode. */
+const visibleTabs = computed(() => {
+  if (props.mode === 'find') return TABS.filter((t) => t.id === 'find')
+  if (props.mode === 'sort' || props.mode === 'drop') return TABS.filter((t) => t.id === 'sort' || t.id === 'drop')
+  return TABS.filter((t) => t.id === 'compute' || t.id === 'transform' || t.id === 'fill' || t.id === 'recode')
+})
+
+const dialogTitle = computed(() => {
+  if (props.mode === 'find') return 'Find in Data'
+  if (props.mode === 'sort' || props.mode === 'drop') return 'Data — Sort & Filter Rows'
+  return 'Transform Variables'
+})
+
 function tabKeyNav(e: KeyboardEvent): void {
-  const idx = TABS.findIndex((t) => t.id === mode.value)
+  const tabs = visibleTabs.value
+  const idx = tabs.findIndex((t) => t.id === mode.value)
   if (idx < 0) return
   let next = idx
-  if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length
-  else if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length
+  if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length
+  else if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length
   else if (e.key === 'Home') next = 0
-  else if (e.key === 'End') next = TABS.length - 1
+  else if (e.key === 'End') next = tabs.length - 1
   else return
   e.preventDefault()
-  mode.value = TABS[next]!.id
+  mode.value = tabs[next]!.id
   status.value = ''
   const container = e.currentTarget as HTMLElement | null
   void nextTick(() => {
@@ -404,7 +422,7 @@ function runFind() {
             <path d="M4 20V4l8 8 8-8v16" />
           </svg>
         </div>
-        <h3 id="transformTitle">Data &amp; Transform</h3>
+        <h3 id="transformTitle">{{ dialogTitle }}</h3>
       </div>
       <button type="button" class="ara-modal-close" title="Close (Esc)" aria-label="Close" @click="close">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -414,9 +432,9 @@ function runFind() {
       </button>
     </div>
 
-    <div class="ara-tabs" role="tablist" aria-label="Data and transform modes" @keydown="tabKeyNav">
+    <div v-if="visibleTabs.length > 1" class="ara-tabs" role="tablist" aria-label="Data and transform modes" @keydown="tabKeyNav">
       <button
-        v-for="t in TABS"
+        v-for="t in visibleTabs"
         :key="t.id"
         type="button"
         role="tab"
@@ -510,6 +528,26 @@ function runFind() {
           <p class="tf-hint">Mean and median need a numeric column; mode works on any column.</p>
         </div>
       </template>
+      <template v-else-if="mode === 'fill'">
+        <div class="tf-field">
+          <label for="tfFillCol">Column</label>
+          <select id="tfFillCol" v-model="sourceCol" class="dialog-select">
+            <option v-for="c in state.ds.columns" :key="c.name" :value="c.name">{{ c.name }}</option>
+          </select>
+        </div>
+        <div class="tf-field">
+          <span class="tf-label">Fill missing values in {{ sourceCol || 'a column' }}</span>
+          <div class="tf-inline">
+            <select v-model="fillMethod" class="dialog-select">
+              <option value="mean">Mean</option>
+              <option value="median">Median</option>
+              <option value="mode">Mode</option>
+            </select>
+            <button type="button" class="btn btn-primary" @click="runFill">Fill missing</button>
+          </div>
+          <p class="tf-hint">Mean and median need a numeric column; mode works on any column.</p>
+        </div>
+      </template>
 
       <!-- RECODE ------------------------------------------------------------- -->
       <template v-else-if="mode === 'recode'">
@@ -557,7 +595,7 @@ function runFind() {
       </template>
 
       <!-- SORT & FILTER ------------------------------------------------------ -->
-      <template v-else-if="mode === 'sort-drop'">
+      <template v-else-if="mode === 'sort'">
         <div class="tf-field">
           <label for="tfSortCol">Sort rows by</label>
           <div class="tf-inline">
@@ -574,9 +612,8 @@ function runFind() {
           </div>
           <p class="tf-hint">Missing values always sort last.</p>
         </div>
-
-        <hr class="tf-rule" />
-
+      </template>
+      <template v-else-if="mode === 'drop'">
         <div class="tf-field">
           <span class="tf-label">Drop rows with missing values</span>
           <div class="tf-check-grid">

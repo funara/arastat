@@ -216,10 +216,6 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-primary" type="button" @click="close">Close</button>
-      </div>
     </div>
   </div>
 </template>
@@ -228,11 +224,18 @@ onUnmounted(() => {
 .test-advisor-modal {
   width: min(880px, 94vw);
   max-width: min(880px, 94vw);
-  height: min(680px, 88vh);
-  max-height: 88vh;
+  height: clamp(520px, 82vh, 760px);
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+@media (max-height: 640px) {
+  .test-advisor-modal {
+    height: 94vh;
+    max-height: 94vh;
+  }
 }
 
 .test-advisor-icon {

@@ -7,7 +7,9 @@ import AiDock from "./AiDock.vue";
 import AnalysisDialog from "./AnalysisDialog.vue";
 import TestAdvisorDialog from "./TestAdvisorDialog.vue";
 import VisualizeDialog, { type VizType } from "./VisualizeDialog.vue";
-import DataTransformDialog, { type TransformMode } from "./DataTransformDialog.vue";
+import DataTransformDialog, {
+  type TransformMode,
+} from "./DataTransformDialog.vue";
 import {
   state,
   rowCount,
@@ -27,6 +29,7 @@ import {
   clearHistory,
 } from "./store.ts";
 import { defaultMeta, datasetFromRows } from "./io/types.ts";
+import { importCsvBytes } from "./io/csv.ts";
 import { schemaById, type AnalysisSchema } from "./specs.ts";
 import { runAnalysis } from "./runAnalysis.ts";
 import {
@@ -36,16 +39,15 @@ import {
   pinChartElement,
   type Run,
 } from "./results.ts";
-import {
-  buildResultsHtml,
-  copyRunsToClipboard,
-} from "./exports.ts";
+import { buildResultsHtml, copyRunsToClipboard } from "./exports.ts";
 import { runsState } from "./results.ts";
 import { openWithDialog, saveWithDialog, ioMessage } from "./fileOps.ts";
 import { resetAiAdvisorCache } from "./AiMissingAdvisorDialog.vue";
 import AiMissingAdvisorDialog from "./AiMissingAdvisorDialog.vue";
 import UpdateRestartModal from "./UpdateRestartModal.vue";
 import AiSettingsDialog from "./AiSettingsDialog.vue";
+import { SAMPLE_DATASETS, getSampleDataset } from "./sampleDatasets.ts";
+import { scanQuality } from "./quality.ts";
 
 const rootEl = ref<HTMLElement | null>(null);
 const aiDock = ref<InstanceType<typeof AiDock> | null>(null);
@@ -151,6 +153,17 @@ function openTestAdvisor(vars?: string[]): void {
 const healthOpen = ref(false);
 const healthFocusVar = ref("");
 
+const qualityReport = computed(() => scanQuality(state.ds));
+const healthBadgeN = computed(() => qualityReport.value.badgeN);
+const healthHasErr = computed(() =>
+  qualityReport.value.issues.some((i) => i.severity === "err"),
+);
+const healthAdvisorTitle = computed(() =>
+  healthBadgeN.value > 0
+    ? `Data Health & Advisor: ${healthBadgeN.value} column${healthBadgeN.value === 1 ? " needs" : "s need"} review`
+    : "Data Health & Advisor: dataset looks clean — open to see the score",
+);
+
 function openHealthAdvisor(colName?: string): void {
   closeMenus();
   healthFocusVar.value = colName ?? "";
@@ -167,7 +180,7 @@ async function onDialogRun(payload: {
   dlgSchema.value = null;
   dlgInitial.value = undefined;
   dlgRerunId.value = undefined;
-  showResults.value = true;
+  expandResultsPane();
   await runAnalysis(schema.id, values, {
     missingPolicy: schema.missingDefault,
     runId: rerunId,
@@ -175,6 +188,23 @@ async function onDialogRun(payload: {
 }
 
 const showResults = ref(true);
+const showData = ref(true);
+
+/* Layout invariant: showData || showResults always true. AiDock independent. */
+function collapseDataPane(): void {
+  if (!showResults.value) showResults.value = true;
+  showData.value = false;
+}
+function expandDataPane(): void {
+  showData.value = true;
+}
+function collapseResultsPane(): void {
+  if (!showData.value) showData.value = true;
+  showResults.value = false;
+}
+function expandResultsPane(): void {
+  showResults.value = true;
+}
 /* Visualize dialog: the extracted component owns chart rendering, so App only
    records the request (chart type + preselected columns) and pins what comes back. */
 const visualizeOpen = ref(false);
@@ -196,25 +226,34 @@ function openVisualize(
 
 function pinChart(payload: { caption: string; svg: string }): void {
   pinChartElement(payload.caption, payload.svg);
-  showResults.value = true;
+  expandResultsPane();
   toast("Chart pinned to Result.");
 }
 
 /* Data & Transform dialog: one host for Compute, Transform, Recode, Sort/Drop
    and Find. `recodeNew` preselects Recode-into-a-new-column for that menu item. */
 const transformOpen = ref(false);
-const transformRequest = ref<{ mode: TransformMode; recodeNew: boolean }>({
+const transformRequest = ref<{
+  mode: TransformMode;
+  recodeNew: boolean;
+  subOp?: "log" | "z" | "bin" | "fill";
+}>({
   mode: "compute",
   recodeNew: true,
 });
 
-function openTransform(mode: TransformMode, recodeNew = false): void {
-  transformRequest.value = { mode, recodeNew };
+function openTransform(
+  mode: TransformMode,
+  recodeNew = false,
+  subOp?: "log" | "z" | "bin" | "fill",
+): void {
+  transformRequest.value = { mode, recodeNew, subOp };
   transformOpen.value = true;
 }
 
 function toggleResults(): void {
-  showResults.value = !showResults.value;
+  if (showResults.value) collapseResultsPane();
+  else expandResultsPane();
 }
 
 function toggleAi(): void {
@@ -223,6 +262,7 @@ function toggleAi(): void {
 
 // Data/Column pane is always visible; the view buttons only switch views.
 function ensureView(view: "data" | "variable"): void {
+  expandDataPane();
   state.view = view;
 }
 
@@ -259,13 +299,13 @@ function viewTabKeyNav(ev: KeyboardEvent): void {
 }
 
 // Resizable Data/Column pane vs Result View
-const DEFAULT_DATA_WIDTH = 400;
-const MIN_DATA_WIDTH = 390;
+const DEFAULT_DATA_WIDTH = 480;
+const MIN_DATA_WIDTH = 460;
 const MIN_RESULTS_WIDTH = 280;
 const savedDataWidth = Number(localStorage.getItem("ara:data-pane-width"));
 const dataPaneWidth = ref(
   Number.isFinite(savedDataWidth) && savedDataWidth > 0
-    ? Math.max(MIN_DATA_WIDTH, Math.min(savedDataWidth, 440))
+    ? Math.max(MIN_DATA_WIDTH, Math.min(savedDataWidth, 640))
     : DEFAULT_DATA_WIDTH,
 );
 // Mirrored from AiDock's open-change so the wall follows rail/open in real time.
@@ -384,6 +424,7 @@ function startSplitterResize(e: PointerEvent): void {
 }
 
 const paneDataStyle = computed(() => {
+  if (!showData.value) return {};
   if (!showResults.value) {
     return { flex: "1 1 auto", width: "auto", maxWidth: "100%" };
   }
@@ -404,11 +445,30 @@ function openAuthorLink(): void {
 }
 
 function fixOptions(run: Run): void {
+  if (run.analysisId === "visualize" || run.analysisId === "pinned_chart")
+    return;
   openAnalysis(run.analysisId, { ...run.spec }, run.runId);
 }
 
+async function onRerun(run: Run): Promise<void> {
+  if (run.analysisId === "visualize" || run.analysisId === "pinned_chart")
+    return;
+  expandResultsPane();
+  await runAnalysis(
+    run.analysisId,
+    { ...run.spec },
+    { missingPolicy: run.missingPolicy, runId: run.runId },
+  );
+}
+
+async function clearAllRuns(): Promise<void> {
+  if (!runsState.runs.length) return;
+  if (!(await askConfirm("Clear all results?"))) return;
+  runsState.runs.splice(0);
+}
+
 function onExplainRun(run: Run): void {
-  showResults.value = true;
+  expandResultsPane();
   aiDock.value?.explainRun(run);
 }
 
@@ -514,6 +574,22 @@ async function confirmCloseDataset(): Promise<void> {
   toast("Dataset closed.");
 }
 
+const sampleDropdownOpen = ref(false);
+
+function loadSampleDataset(id?: string): void {
+  sampleDropdownOpen.value = false;
+  const def = getSampleDataset(id || "customer_churn");
+  const bytes = new TextEncoder().encode(def.csv);
+  const ds = importCsvBytes(bytes);
+  ds.sample = true;
+  setDataset(ds);
+  clearHistory();
+  state.filename = def.filename;
+  aiDock.value?.clear();
+  resetAiAdvisorCache();
+  toast(`Loaded ${def.name} (${def.rows} rows, ${def.cols} variables).`);
+}
+
 /* Themed confirm dialog (replaces native window.confirm, which ignores app theming). */
 const confirmState = ref<{
   message: string;
@@ -555,6 +631,9 @@ async function act(id: string): Promise<void> {
       return;
     case "file-new":
       void confirmNewDataset();
+      return;
+    case "file-sample":
+      loadSampleDataset();
       return;
     case "file-open":
     case "file-import": {
@@ -637,30 +716,35 @@ async function act(id: string): Promise<void> {
       ensureView("variable");
       return;
     case "data-sort":
-    case "transform-compute":
-    case "transform-fill":
-    case "transform-log":
-    case "transform-standardize":
-    case "transform-bin":
-    case "transform-recode-same":
-    case "transform-recode-diff":
-    case "data-drop-missing":
-    case "edit-find": {
-      // Every Data/Transform operation now lives in one themed dialog: no
-      // window.prompt(), no dead-end toast. Map the menu item onto its mode.
-      const mode: TransformMode =
-        id === "data-sort" || id === "data-drop-missing"
-          ? "sort-drop"
-          : id === "edit-find"
-            ? "find"
-            : id.startsWith("transform-recode")
-              ? "recode"
-              : id === "transform-compute"
-                ? "compute"
-                : "transform";
-      openTransform(mode, id === "transform-recode-diff");
+      openTransform("sort");
       return;
-    }
+    case "data-drop-missing":
+      openTransform("drop");
+      return;
+    case "edit-find":
+      openTransform("find");
+      return;
+    case "transform-compute":
+      openTransform("compute");
+      return;
+    case "transform-fill":
+      openTransform("fill");
+      return;
+    case "transform-log":
+      openTransform("transform", false, "log");
+      return;
+    case "transform-standardize":
+      openTransform("transform", false, "z");
+      return;
+    case "transform-bin":
+      openTransform("transform", false, "bin");
+      return;
+    case "transform-recode-same":
+      openTransform("recode", false);
+      return;
+    case "transform-recode-diff":
+      openTransform("recode", true);
+      return;
     default:
       // Unreachable from the UI (every menu id has a case above); kept honest
       // rather than promising a future build if a stale id ever arrives.
@@ -700,6 +784,18 @@ function toggleSub(name: string): void {
   openSub.value = openSub.value === name ? null : name;
 }
 
+let subCloseTimer: ReturnType<typeof setTimeout> | undefined;
+function subEnter(name: string): void {
+  clearTimeout(subCloseTimer);
+  openSub.value = name;
+}
+function subLeave(): void {
+  clearTimeout(subCloseTimer);
+  subCloseTimer = setTimeout(() => {
+    openSub.value = null;
+  }, 120);
+}
+
 function toggleMenu(name: string): void {
   if (activeMenu.value === name) {
     closeMenus();
@@ -718,6 +814,7 @@ function closeMenus(): void {
   activeMenu.value = null;
   isMenuBarActive.value = false;
   openSub.value = null;
+  sampleDropdownOpen.value = false;
   for (const s of Array.from(
     rootEl.value?.querySelectorAll(".dd-sub.open") ?? [],
   )) {
@@ -800,6 +897,10 @@ function onWindowKeydown(e: KeyboardEvent): void {
   } else if (k === "j") {
     e.preventDefault();
     toggleResults();
+  } else if (k === "d") {
+    e.preventDefault();
+    if (showData.value) collapseDataPane();
+    else expandDataPane();
   } else if (k === "tab") {
     e.preventDefault();
     ensureView(state.view === "data" ? "variable" : "data");
@@ -832,10 +933,13 @@ function onInsertNarrativeNote(e: Event): void {
   });
 }
 
-/** Clicking anywhere outside the menubar closes any open menu. */
+/** Clicking anywhere outside the menubar or sample dropdown closes them. */
 function onWindowClick(e: MouseEvent): void {
   const target = e.target as HTMLElement | null;
   if (!target?.closest(".titlebar-menu")) closeMenus();
+  if (!target?.closest(".sample-dataset-dropdown-wrap")) {
+    sampleDropdownOpen.value = false;
+  }
 }
 
 onMounted(() => {
@@ -848,6 +952,9 @@ onMounted(() => {
   if (window.ara?.window) {
     void window.ara.window.isMaximized().then((max) => {
       isMaximized.value = max;
+      if (!max) {
+        void window.ara?.window?.toggleMaximize();
+      }
     });
     disposers.push(
       window.ara.window.onStateChanged((max) => {
@@ -866,7 +973,10 @@ onMounted(() => {
 // Every listener registered on mount is released here: leaving one attached
 // duplicates analysis output and click handling across HMR reloads.
 onBeforeUnmount(() => {
-  window.removeEventListener("ara:insert-narrative-note", onInsertNarrativeNote);
+  window.removeEventListener(
+    "ara:insert-narrative-note",
+    onInsertNarrativeNote,
+  );
   window.removeEventListener("click", onWindowClick);
   window.removeEventListener("keydown", onWindowKeydown);
   for (const dispose of disposers.splice(0)) dispose();
@@ -878,7 +988,11 @@ onBeforeUnmount(() => {
     <!-- ====================================================================
          1. CUSTOM FRAMELESS TITLEBAR (ARA OFFICE CHROME)
          ==================================================================== -->
-    <header class="app-titlebar" data-tauri-drag-region aria-label="Application header">
+    <header
+      class="app-titlebar"
+      data-tauri-drag-region
+      aria-label="Application header"
+    >
       <div class="titlebar-left">
         <!-- Logo with transparent background (dark & light theme variants) -->
         <img
@@ -920,6 +1034,39 @@ onBeforeUnmount(() => {
               >
                 Open<span class="hint">Ctrl+O</span>
               </button>
+              <div
+                class="dd-sub"
+                data-sub="sample-datasets"
+                :class="{ open: openSub === 'sample-datasets' }"
+                @mouseenter="openSub = 'sample-datasets'"
+              >
+                <button
+                  class="dd-row"
+                  role="menuitem"
+                  aria-haspopup="true"
+                  :aria-expanded="openSub === 'sample-datasets'"
+                  @click.stop="
+                    openSub =
+                      openSub === 'sample-datasets' ? null : 'sample-datasets'
+                  "
+                >
+                  <span>Load sample dataset</span>
+                </button>
+                <div class="dropdown sample-menu-dropdown" role="menu">
+                  <button
+                    v-for="s in SAMPLE_DATASETS"
+                    :key="s.id"
+                    class="dd-row"
+                    role="menuitem"
+                    @click.stop="
+                      loadSampleDataset(s.id);
+                      closeMenus();
+                    "
+                  >
+                    <span>{{ s.name }}</span>
+                  </button>
+                </div>
+              </div>
               <div class="dd-sep"></div>
               <button
                 class="dd-row"
@@ -1018,7 +1165,18 @@ onBeforeUnmount(() => {
                 role="menuitem"
                 @click.stop="openHealthAdvisor()"
               >
-                <span class="menu-icon" aria-hidden="true">✨</span>
+                <svg
+                  class="menu-svg-icon"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
                 <strong>Data Health Advisor</strong>
               </button>
               <div class="dd-sep"></div>
@@ -1217,7 +1375,21 @@ onBeforeUnmount(() => {
                 role="menuitem"
                 @click.stop="openTestAdvisor()"
               >
-                <span class="menu-icon" aria-hidden="true">✨</span>
+                <svg
+                  class="menu-svg-icon"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <polygon
+                    points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"
+                  />
+                </svg>
                 <strong>Statistical Test Advisor</strong>
               </button>
               <div class="dd-sep"></div>
@@ -1235,13 +1407,19 @@ onBeforeUnmount(() => {
               >
                 Frequencies
               </button>
-              <div class="dd-sep"></div>
+              <button
+                class="dd-row"
+                role="menuitem"
+                @click.stop="openAnalysis('shapiro_wilk')"
+              >
+                Shapiro-Wilk normality
+              </button>
               <div
                 class="dd-sub"
                 data-sub="ttests"
                 :class="{ open: openSub === 'ttests' }"
-                @mouseenter="openSub = 'ttests'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('ttests')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1280,8 +1458,8 @@ onBeforeUnmount(() => {
                 class="dd-sub"
                 data-sub="anova"
                 :class="{ open: openSub === 'anova' }"
-                @mouseenter="openSub = 'anova'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('anova')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1327,8 +1505,8 @@ onBeforeUnmount(() => {
                 class="dd-sub"
                 data-sub="correlation"
                 :class="{ open: openSub === 'correlation' }"
-                @mouseenter="openSub = 'correlation'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('correlation')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1354,14 +1532,21 @@ onBeforeUnmount(() => {
                   >
                     Kendall tau
                   </button>
+                  <button
+                    class="dd-row"
+                    role="menuitem"
+                    @click.stop="openAnalysis('spearman_correlation')"
+                  >
+                    Spearman rank
+                  </button>
                 </div>
               </div>
               <div
                 class="dd-sub"
                 data-sub="regression"
                 :class="{ open: openSub === 'regression' }"
-                @mouseenter="openSub = 'regression'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('regression')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1393,8 +1578,8 @@ onBeforeUnmount(() => {
                 class="dd-sub"
                 data-sub="scale"
                 :class="{ open: openSub === 'scale' }"
-                @mouseenter="openSub = 'scale'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('scale')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1426,8 +1611,8 @@ onBeforeUnmount(() => {
                 class="dd-sub"
                 data-sub="chisq"
                 :class="{ open: openSub === 'chisq' }"
-                @mouseenter="openSub = 'chisq'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('chisq')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1473,8 +1658,8 @@ onBeforeUnmount(() => {
                 class="dd-sub"
                 data-sub="nonparam"
                 :class="{ open: openSub === 'nonparam' }"
-                @mouseenter="openSub = 'nonparam'"
-                @mouseleave="openSub = null"
+                @mouseenter="subEnter('nonparam')"
+                @mouseleave="subLeave()"
               >
                 <button
                   class="dd-row"
@@ -1621,7 +1806,32 @@ onBeforeUnmount(() => {
          3. WORKSPACE: THREE-PANE LAYOUT
          ==================================================================== -->
     <div class="workspace" :class="{ 'is-resizing': isResizingPanes }">
+      <button
+        v-if="!showData"
+        class="data-rail"
+        type="button"
+        title="Open Data & Variable View (Ctrl+D)"
+        aria-label="Open Data & Variable View"
+        @click="expandDataPane()"
+      >
+        <span class="data-rail-icon" aria-hidden="true">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="9" y1="21" x2="9" y2="9" />
+          </svg>
+        </span>
+        <span class="data-rail-label">DATA / VARIABLES</span>
+      </button>
       <section
+        v-if="showData"
         class="pane-data"
         :style="paneDataStyle"
         aria-label="Data editor"
@@ -1657,7 +1867,9 @@ onBeforeUnmount(() => {
                 <line x1="9" y1="21" x2="9" y2="9" />
               </svg>
               <span>Data View</span>
-              <span class="view-tab-count ara-spreadsheet-count">{{ rowCount }}</span>
+              <span class="view-tab-count ara-spreadsheet-count">{{
+                rowCount
+              }}</span>
             </button>
             <button
               class="view-tab-btn"
@@ -1682,98 +1894,207 @@ onBeforeUnmount(() => {
                 <line x1="4" y1="18" x2="20" y2="18" />
               </svg>
               <span>Variable View</span>
-              <span class="view-tab-count ara-spreadsheet-count">{{ colCount }}</span>
+              <span class="view-tab-count ara-spreadsheet-count">{{
+                colCount
+              }}</span>
             </button>
           </div>
 
           <div class="spacer"></div>
-          <span v-if="state.sample" class="demo-label">Sample data</span>
-          <button
-            v-if="state.view === 'data'"
-            class="chip-btn"
-            type="button"
-            title="Add new row (Data > Add row)"
-            @click="act('data-add-case')"
-          >
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.4"
+          <div class="data-header-actions">
+            <button
+              v-if="state.view === 'data'"
+              class="chip-btn data-action-btn"
+              type="button"
+              title="Add new row (Data > Add row)"
+              @click="act('data-add-case')"
             >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>Row</span>
-          </button>
-          <button
-            v-if="state.view === 'variable'"
-            class="chip-btn"
-            type="button"
-            title="Add new variable (Data > Add column)"
-            @click="act('data-add-var')"
-          >
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.4"
+              <svg
+                width="9"
+                height="9"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Row</span>
+            </button>
+            <button
+              v-if="state.view === 'variable'"
+              class="chip-btn data-action-btn"
+              type="button"
+              title="Add new variable (Data > Add column)"
+              @click="act('data-add-var')"
             >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>Variable</span>
-          </button>
-          <button
-            class="chip-btn icon-only"
-            type="button"
-            :disabled="!canUndo"
-            :title="undoTip"
-            aria-label="Undo"
-            @click="act('edit-undo')"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+              <svg
+                width="9"
+                height="9"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Variable</span>
+            </button>
+            <button
+              class="chip-btn icon-only"
+              type="button"
+              :disabled="!canUndo"
+              :title="undoTip"
+              aria-label="Undo"
+              @click="act('edit-undo')"
             >
-              <path d="M9 14 4 9l5-5" />
-              <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
-            </svg>
-          </button>
-          <button
-            class="chip-btn icon-only"
-            type="button"
-            :disabled="!canRedo"
-            :title="redoTip"
-            aria-label="Redo"
-            @click="act('edit-redo')"
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 14 4 9l5-5" />
+                <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
+              </svg>
+            </button>
+            <button
+              class="chip-btn icon-only"
+              type="button"
+              :disabled="!canRedo"
+              :title="redoTip"
+              aria-label="Redo"
+              @click="act('edit-redo')"
             >
-              <path d="m15 14 5-5-5-5" />
-              <path d="M20 9H10a6 6 0 0 0 0 12h1" />
-            </svg>
-          </button>
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m15 14 5-5-5-5" />
+                <path d="M20 9H10a6 6 0 0 0 0 12h1" />
+              </svg>
+            </button>
+            <button
+              class="chip-btn icon-only"
+              type="button"
+              title="Collapse Data View"
+              aria-label="Collapse Data View"
+              @click="collapseDataPane()"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              >
+                <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+                <path d="M5.5 2.5v11" />
+                <path
+                  d="M12.5 8H8.1M9.8 5.9L7.7 8l2.1 2.1"
+                  stroke-width="1.3"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Compact Toolbar for Data View (Symmetric with Variable View) -->
+        <div
+          v-if="!isEmpty && state.view === 'data'"
+          class="dv-compact-toolbar"
+        >
+          <div class="dv-toolbar-left">
+            <span class="dv-status-text">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="21" x2="9" y2="9" />
+              </svg>
+              <span
+                >{{ rowCount.toLocaleString() }} cases &bull;
+                {{ colCount.toLocaleString() }} variables</span
+              >
+            </span>
+          </div>
+
+          <div class="dv-toolbar-right">
+            <!-- Health button -->
+            <button
+              class="btn-advisor-toolbar"
+              type="button"
+              :title="healthAdvisorTitle"
+              :aria-label="healthAdvisorTitle"
+              @click="openHealthAdvisor('')"
+            >
+              <svg
+                class="advisor-btn-icon"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span class="advisor-btn-text">Health</span>
+              <span
+                v-if="healthBadgeN > 0"
+                class="advisor-badge"
+                :class="healthHasErr ? 'is-err' : 'is-warn'"
+                >{{ healthBadgeN }}</span
+              >
+            </button>
+
+            <!-- Statistical Test Advisor button -->
+            <button
+              class="btn-advisor-toolbar btn-test-advisor-toolbar"
+              type="button"
+              title="Statistical Test Advisor: Evaluate assumptions and match tests"
+              aria-label="Statistical Test Advisor"
+              @click="openTestAdvisor()"
+            >
+              <svg
+                class="advisor-btn-icon"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="18" y1="20" x2="18" y2="10" />
+                <line x1="12" y1="20" x2="12" y2="4" />
+                <line x1="6" y1="20" x2="6" y2="14" />
+              </svg>
+              <span class="advisor-btn-text">Test Advisor</span>
+            </button>
+          </div>
         </div>
         <div
           v-if="!isEmpty"
@@ -1798,30 +2119,102 @@ onBeforeUnmount(() => {
           />
         </div>
         <div v-else class="empty-state">
-          <svg width="40" height="30" viewBox="0 0 40 30" aria-hidden="true">
-            <rect
-              x="1"
-              y="1"
-              width="38"
-              height="28"
-              rx="2"
-              fill="none"
-              stroke="currentColor"
-            />
-            <path d="M1 8h38M13 8v21M26 8v21" stroke="currentColor" />
-          </svg>
-          <p>No data yet. Enter rows or import a .sav, .csv, or .xlsx file.</p>
-          <div class="es-actions">
-            <button
-              class="btn btn-primary"
-              type="button"
-              @click="act('file-import')"
-            >
-              Import Data
-            </button>
-            <button class="btn" type="button" @click="act('data-paste')">
-              Paste
-            </button>
+          <div class="empty-state-card">
+            <div class="empty-state-icon-wrap" aria-hidden="true">
+              <svg
+                width="40"
+                height="40"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-opacity="0.6" />
+              </svg>
+            </div>
+            <h3 class="empty-state-title">Let's Get Started</h3>
+            <p class="empty-state-text">
+              Import your data or explore with our curated sample datasets.
+            </p>
+            <div class="empty-state-actions">
+              <button
+                class="btn btn-primary"
+                type="button"
+                @click="act('file-import')"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                <span>Import File</span>
+              </button>
+              <div class="sample-dataset-dropdown-wrap">
+                <button
+                  class="btn btn-outline sample-dataset-btn"
+                  type="button"
+                  aria-haspopup="menu"
+                  :aria-expanded="sampleDropdownOpen"
+                  @click.stop="sampleDropdownOpen = !sampleDropdownOpen"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                    />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                  <span>Sample Dataset</span>
+                  <svg
+                    class="dropdown-caret"
+                    :class="{ 'is-flipped': sampleDropdownOpen }"
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                <div
+                  v-if="sampleDropdownOpen"
+                  class="dropdown sample-dataset-menu"
+                  role="menu"
+                  aria-label="Sample Datasets"
+                >
+                  <button
+                    v-for="s in SAMPLE_DATASETS"
+                    :key="s.id"
+                    class="dd-row"
+                    role="menuitem"
+                    @click.stop="loadSampleDataset(s.id)"
+                  >
+                    <span>{{ s.name }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="empty-state-hints">
+              <span>Supports .sav, .csv, .tsv, .xlsx, .json</span>
+            </div>
           </div>
         </div>
       </section>
@@ -1857,7 +2250,7 @@ onBeforeUnmount(() => {
 
       <!-- Draggable Splitter between Data/Column pane and Result View -->
       <div
-        v-if="showResults"
+        v-if="showData && showResults"
         class="pane-splitter"
         role="separator"
         aria-orientation="vertical"
@@ -1879,11 +2272,12 @@ onBeforeUnmount(() => {
         @copy-run="copyApaRun"
         @copy-apa="copyApaRun"
         @fix-options="fixOptions"
+        @rerun="onRerun"
+        @clear-all="clearAllRuns"
         @explain-run="onExplainRun"
-        @close="showResults = false"
+        @close="collapseResultsPane()"
         @close-run="closeRun"
       />
-
       <AiDock
         ref="aiDock"
         @edit-options="(p) => openAnalysis(p.analysis, p.options)"
@@ -1947,6 +2341,7 @@ onBeforeUnmount(() => {
           "
         >
           <span class="dataset-filename-text">{{ cleanFilename }}</span>
+          <span v-if="state.sample" class="demo-label">Sample data</span>
           <span v-if="!isEmpty" class="dataset-count-hint"
             >&bull; {{ rowCount.toLocaleString() }} rows,
             {{ colCount.toLocaleString() }} cols</span
@@ -2038,6 +2433,7 @@ onBeforeUnmount(() => {
       :mode="transformRequest.mode"
       :column="''"
       :recode-new="transformRequest.recodeNew"
+      :sub-op="transformRequest.subOp"
       @close="transformOpen = false"
       @done="toast"
       @find-hit="jumpToDataColumn"

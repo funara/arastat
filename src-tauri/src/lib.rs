@@ -86,14 +86,12 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let window = window.clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(150)).await;
-                    if !window.is_maximized().unwrap_or(false) {
-                        if let Err(err) = window.maximize() {
-                            log::warn!("[window] maximize failed: {err}");
-                        }
-                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     if let Err(err) = window.show() {
                         log::warn!("[window] show failed: {err}");
+                    }
+                    if let Err(err) = window.maximize() {
+                        log::warn!("[window] maximize failed: {err}");
                     }
                 });
             }
