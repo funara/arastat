@@ -1,6 +1,6 @@
-# ARAStat — AI Coding Agent Playbook & Guardrails (`agent.md`)
+# ARAStat — AI Coding Agent Playbook & Guardrails (`AGENTS.md`)
 
-This document is the authoritative operational guide for any AI coding assistant working in the **ARAStat** repository. Read this file alongside [`design.md`], [`architecture.md`] and [`plan.md`]before proposing or writing changes.
+This document is the authoritative operational guide for any AI coding assistant working in the **ARAStat** repository. Read this file alongside [`DESIGN.md`](DESIGN.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md) before proposing or writing changes.
 
 ---
 
@@ -13,7 +13,7 @@ This document is the authoritative operational guide for any AI coding assistant
 2. **Provider-Agnostic AI**:
    - Keep first-class parity between Google Gemini, OpenAI-compatible APIs, and local keyless loopback servers (`http://localhost:11434/v1` for Ollama, `http://localhost:1234/v1` for LM Studio).
 3. **SPSS + JASP Visual & Functional Standard**:
-   - Follow [`design.md`](file:///C:/Users/adhir/Documents/Git/ARAEcosystem/arastat/design.md) strictly.
+   - Follow [`DESIGN.md`](DESIGN.md) strictly.
    - **Never** use `window.prompt()`, `window.alert()`, or `window.confirm()`. Always use themed ARAStat modals.
    - **Never** ship dead-end UI stubs (e.g., `"Available in a later build"` toasts). Every visible control must work end-to-end.
    - **Never** hardcode hex colors in Vue `<style>` blocks; use CSS custom properties from `src/ara.css` so Light and Dark themes stay in lockstep.
@@ -25,7 +25,7 @@ This document is the authoritative operational guide for any AI coding assistant
 
 ## 2. Build, Typecheck & Test Commands
 
-Run these commands from the repository root (`C:\Users\adhir\Documents\Git\ARAEcosystem\arastat`):
+Run these commands from the repository root:
 
 | Task | Command | Notes |
 | :--- | :--- | :--- |

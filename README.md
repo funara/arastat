@@ -54,15 +54,15 @@
 
 ARAStat implements 25 statistical procedures with golden-reference fixture tests verifying exact mathematical alignment against R and SPSS outputs:
 
-| Category                         | Analyses Included                                                                                                                                                    |
-| :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Descriptive & Frequencies**    | Descriptive Statistics, Frequency Tables                                                                                                                             |
-| **Comparing Means (Parametric)** | One-Sample t-test, Paired-Samples t-test, Independent-Samples t-test, One-Way ANOVA, Welch ANOVA, Two-Way Factorial ANOVA                                            |
-| **Non-Parametric Tests**         | Mann-Whitney U, Wilcoxon Signed-Rank, Wilcoxon One-Sample, Kruskal-Wallis H, Friedman ANOVA                                                                          |
+| Category                               | Analyses Included                                                                                                                                                     |
+| :------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Descriptive & Frequencies**    | Descriptive Statistics, Frequency Tables                                                                                                                              |
+| **Comparing Means (Parametric)** | One-Sample t-test, Paired-Samples t-test, Independent-Samples t-test, One-Way ANOVA, Welch ANOVA, Two-Way Factorial ANOVA                                             |
+| **Non-Parametric Tests**         | Mann-Whitney U, Wilcoxon Signed-Rank, Wilcoxon One-Sample, Kruskal-Wallis H, Friedman ANOVA                                                                           |
 | **Correlation & Association**    | Pearson & Spearman Correlation, Kendall's Tau-b, Chi-Square Test of Independence, Chi-Square Goodness of Fit, Fisher's Exact Test (2×2), McNemar Test, Binomial Test |
-| **Regression Modeling**          | Linear Regression (OLS), Binary Logistic Regression                                                                                                                  |
-| **Scale & Factor Analysis**      | Scale Reliability Analysis (Cronbach's Alpha & McDonald's Omega), Exploratory Factor Analysis (EFA / PCA)                                                            |
-| **Post-Hoc Tests**               | Tukey's Honestly Significant Difference (HSD)                                                                                                                        |
+| **Regression Modeling**          | Linear Regression (OLS), Binary Logistic Regression                                                                                                                   |
+| **Scale & Factor Analysis**      | Scale Reliability Analysis (Cronbach's Alpha & McDonald's Omega), Exploratory Factor Analysis (EFA / PCA)                                                             |
+| **Post-Hoc Tests**               | Tukey's Honestly Significant Difference (HSD)                                                                                                                         |
 
 ---
 
@@ -131,8 +131,8 @@ engine/.venv/bin/python -m pip install -r engine/requirements.txt
 # Start the Tauri v2 desktop app in development mode with HMR
 npm run dev
 
-# Build a signed Windows installer (NSIS) + updater artifacts
-npm run build
+# Build a local desktop installer (no signing key needed for local builds)
+npm run build -- --no-sign
 
 # Build just the frontend bundle (src/ -> dist/)
 npm run build:vite
@@ -146,45 +146,10 @@ npm test
 # Run the Rust host + live-engine seam tests
 npm run test:rust
 
-# Regenerate the tier-2 reference fixtures (writes tests/fixtures/tier2)
+# Regenerate the reference fixtures
 engine/.venv/Scripts/python.exe engine/ara_engine/fixtures.py   # Windows
 engine/.venv/bin/python engine/ara_engine/fixtures.py          # macOS / Linux
 ```
-
-### Updater signing keys
-
-`npm run build` signs the update package with a Minisign key. Generate a
-keypair once and keep the private key outside the repo:
-
-```bash
-npx tauri signer generate -w ~/.tauri/arastat.key
-```
-
-Then export the private key (and its password, if set) for the release build, and
-paste the printed **public** key into `plugins.updater.pubkey` in
-`src-tauri/tauri.conf.json`:
-
-```bash
-export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/arastat.key)"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-```
-
-Publish the resulting `.exe`, its `.sig`, and a `latest.json` manifest to the
-GitHub release the `endpoints` list points at. Without a key, the updater stays
-disabled and the app makes zero update requests at startup.
-
-To exercise the real check/download/verify path without publishing a release,
-point a **debug** run at any static `latest.json` (served over plain HTTP for
-local testing only — Tauri warns about that on a debug build and refuses it in
-release):
-
-```bash
-ARASTAT_UPDATE_ENDPOINT="http://127.0.0.1:8099/latest.json" npm run dev
-```
-
-A manifest advertising a version whose artifact is not signed for that exact
-version is rejected by Minisign verification, which is the expected outcome of
-mismatched test fixtures.
 
 ---
 

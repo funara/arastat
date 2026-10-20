@@ -437,10 +437,10 @@ mod tests {
     #[test]
     fn percent_decode_round_trips_encoded_paths() {
         // Mirrors JS encodeURIComponent for a spaced, non-ASCII Windows path.
-        let encoded = "C%3A%5CUsers%5Cadhir%5CMy%20Documents%5C%C3%A9tude.ara.zip";
+        let encoded = "C%3A%5CUsers%5Cresearcher%5CMy%20Documents%5C%C3%A9tude.ara.zip";
         assert_eq!(
             percent_decode(encoded).unwrap(),
-            "C:\\Users\\adhir\\My Documents\\étude.ara.zip"
+            "C:\\Users\\researcher\\My Documents\\étude.ara.zip"
         );
         // Unescaped input passes through unchanged.
         assert_eq!(
