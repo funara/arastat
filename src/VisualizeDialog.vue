@@ -2,21 +2,47 @@
 // Visualize dialog (Phase 8 §8.2.E): Plotly chart builder extracted from App.vue.
 // Owns the whole chart surface — trace construction, layout theming, and the
 // footer actions (pin to results, export). App only opens/closes it and routes
-// the `pin` event into the run store.
-import { computed, nextTick, ref, watch } from 'vue'
-import Plotly from 'plotly.js-dist-min'
-import { state, showValueLabels, type Cell } from './store.ts'
+// the `pin` event into the run store. The chart *logic* lives in vizCharts.ts
+// so it stays pure and unit-testable; this file is the Plotly shell.
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { state, showValueLabels } from './store.ts'
 
-export type VizType = 'scatter' | 'bar' | 'line' | 'histogram' | 'boxplot'
+type PlotlyModule = typeof import('plotly.js-dist-min')['default']
+let plotlyPromise: Promise<PlotlyModule> | null = null
+
+/** Lazy-load Plotly on first chart render so the 4.8 MB bundle stays out of startup. */
+function loadPlotly(): Promise<PlotlyModule> {
+  if (!plotlyPromise) {
+    plotlyPromise = import('plotly.js-dist-min').then((m) => m.default)
+  }
+  return plotlyPromise
+}
+import { svgToPngBytes } from './exports.ts'
+import {
+  buildTraces,
+  captionFor,
+  type VizSpec,
+  type VizTheme,
+  type VizType,
+} from './vizCharts.ts'
+
+export type { VizSpec, VizType }
 
 const props = withDefaults(
-  defineProps<{ open: boolean; type?: VizType; defaultX?: string; defaultY?: string }>(),
-  { type: 'scatter', defaultX: '', defaultY: '' }
+  defineProps<{
+    open: boolean
+    type?: VizType
+    defaultX?: string
+    defaultY?: string
+    /** Saved chart to edit (Results pane → Edit options). */
+    initialSpec?: VizSpec | null
+  }>(),
+  { type: 'scatter', defaultX: '', defaultY: '', initialSpec: null }
 )
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'pin', payload: { caption: string; svg: string }): void
+  (e: 'pin', payload: { caption: string; svg: string; spec: VizSpec }): void
 }>()
 
 const dlg = ref<HTMLDialogElement | null>(null)
@@ -25,27 +51,37 @@ const plotEl = ref<HTMLElement | null>(null)
 const vizType = ref<VizType>(props.type)
 const vizX = ref('')
 const vizY = ref('')
+const vizGroup = ref('')
+const trendline = ref(false)
 const status = ref('')
 
 const numericCols = computed(() => state.ds.columns.filter((c) => c.type === 'numeric'))
+const groupLikeCols = computed(() =>
+  state.ds.columns.filter((c) => c.measure === 'nominal' || c.measure === 'ordinal')
+)
 
-// Boxplot reads one numeric column and ignores X, so it has no second axis.
+/** The histogram plots X's own values; every other type reads a numeric Y. */
 const needsY = computed(() => vizType.value !== 'histogram')
-const needsX = computed(() => vizType.value !== 'boxplot')
 
 const availableXCols = computed(() => {
-  if (vizType.value === 'scatter' || vizType.value === 'histogram' || vizType.value === 'boxplot') {
-    return numericCols.value.length ? numericCols.value : state.ds.columns
+  if (vizType.value === 'histogram') return numericCols.value.length ? numericCols.value : state.ds.columns
+  if (vizType.value === 'boxplot') return groupLikeCols.value.length ? groupLikeCols.value : state.ds.columns
+  if (vizType.value === 'bar') {
+    return groupLikeCols.value.length ? groupLikeCols.value : numericCols.value.length ? numericCols.value : state.ds.columns
   }
-  return state.ds.columns
+  return numericCols.value.length ? numericCols.value : state.ds.columns
 })
 
-const availableYCols = computed(() => {
-  // Only the histogram has no Y axis; every other type reads a numeric Y.
-  if (vizType.value !== 'histogram') {
-    return numericCols.value.length ? numericCols.value : state.ds.columns
-  }
-  return state.ds.columns
+const availableYCols = computed(() =>
+  numericCols.value.length ? numericCols.value : state.ds.columns
+)
+
+/** The "Group / Color by" column: any column that is not already on an axis. */
+const availableGroupCols = computed(() => {
+  const used = new Set([vizX.value, vizY.value].filter(Boolean))
+  const rest = state.ds.columns.filter((c) => !used.has(c.name))
+  const groupLike = rest.filter((c) => c.measure === 'nominal' || c.measure === 'ordinal')
+  return groupLike.length ? groupLike : rest
 })
 
 /** First column usable as a chart source: the chart needs data to draw at all. */
@@ -57,10 +93,15 @@ function pickValid(current: string, list: typeof state.ds.columns, avoid?: strin
 function seedSelection(): void {
   const xList = availableXCols.value
   const yList = availableYCols.value
-  vizX.value =
-    props.defaultX && xList.some((c) => c.name === props.defaultX)
-      ? props.defaultX
-      : pickValid(vizX.value, xList)
+  // A boxplot's X is an optional group: an empty X means "no grouping".
+  if (vizType.value === 'boxplot' && !vizX.value) {
+    // keep the empty group
+  } else {
+    vizX.value =
+      props.defaultX && xList.some((c) => c.name === props.defaultX)
+        ? props.defaultX
+        : pickValid(vizX.value, xList)
+  }
   const avoid = vizType.value === 'scatter' ? vizX.value : undefined
   vizY.value =
     props.defaultY && yList.some((c) => c.name === props.defaultY)
@@ -69,188 +110,106 @@ function seedSelection(): void {
   if (avoid && vizY.value === avoid) {
     vizY.value = (yList.find((c) => c.name !== avoid) ?? yList[0])?.name ?? ''
   }
+  // The group column must never collide with an axis.
+  if (vizGroup.value && (vizGroup.value === vizX.value || vizGroup.value === vizY.value)) {
+    vizGroup.value = ''
+  }
 }
 
-function num(v: Cell): number {
-  return typeof v === 'number' ? v : Number(v)
-}
-
-function column(name: string): Cell[] {
-  return (state.ds.data[name] as Cell[] | undefined) ?? []
-}
-
-/** Trace + axis titles for the current chart type. Pure but for the store read. */
-function buildTrace(): { trace: Record<string, unknown>; yTitle: string; title: string } {
-  const rawX = column(vizX.value)
-  const rawY = column(vizY.value)
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-  const primary = '#3b82f6'
-  const border = isDark ? '#60a5fa' : '#1d4ed8'
-
-  if (vizType.value === 'histogram') {
-    const vals = rawX.map(num).filter((v) => Number.isFinite(v))
-    return {
-      trace: {
-        x: vals,
-        type: 'histogram',
-        name: vizX.value,
-        marker: { color: primary, opacity: 0.8, line: { width: 1, color: border } },
-        hovertemplate: '<b>Range</b>: %{x}<br><b>Count</b>: %{y}<extra></extra>',
-      },
-      yTitle: 'Frequency',
-      title: `Distribution of ${vizX.value}`,
-    }
-  }
-
-  if (vizType.value === 'boxplot') {
-    const vals = rawY.map(num).filter((v) => Number.isFinite(v))
-    return {
-      trace: {
-        y: vals,
-        type: 'box',
-        name: vizY.value,
-        boxmean: true,
-        marker: { color: primary },
-        line: { color: border, width: 1.5 },
-        hovertemplate: `<b>${vizY.value}</b>: %{y}<extra></extra>`,
-      },
-      yTitle: vizY.value || 'Value',
-      title: `Distribution of ${vizY.value}`,
-    }
-  }
-
-  if (vizType.value === 'bar') {
-    // Categorical X + numeric Y aggregates to the group mean.
-    const labels = state.ds.columns.find((c) => c.name === vizX.value)?.valueLabels
-    const showLabels = showValueLabels.value
-    const groups = new Map<string, number[]>()
-    const len = Math.max(rawX.length, rawY.length)
-    for (let i = 0; i < len; i++) {
-      const cat = String(rawX[i] ?? '').trim()
-      if (!cat || cat === 'null' || cat === 'undefined') continue
-      const vy = num(rawY[i])
-      if (Number.isFinite(vy)) {
-        if (!groups.has(cat)) groups.set(cat, [])
-        groups.get(cat)!.push(vy)
-      }
-    }
-    const cats: string[] = []
-    const means: number[] = []
-    for (const [cat, vals] of groups) {
-      const hit = showLabels ? labels?.[cat] : undefined
-      cats.push(hit ? `${hit} (${cat})` : cat)
-      means.push(Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100)
-    }
-    return {
-      trace: {
-        x: cats,
-        y: means,
-        type: 'bar',
-        name: `Mean ${vizY.value}`,
-        marker: { color: primary, opacity: 0.85, line: { width: 1, color: border } },
-        hovertemplate: `<b>%{x}</b><br>Mean ${vizY.value}: %{y}<extra></extra>`,
-      },
-      yTitle: `Mean ${vizY.value}`,
-      title: `Mean ${vizY.value} by ${vizX.value}`,
-    }
-  }
-
-  // scatter / line: pairwise numeric extraction; line sorts by X for a clean path.
-  const pairs: Array<{ x: number; y: number }> = []
-  const len = Math.max(rawX.length, rawY.length)
-  for (let i = 0; i < len; i++) {
-    const vx = num(rawX[i])
-    const vy = num(rawY[i])
-    if (Number.isFinite(vx) && Number.isFinite(vy)) pairs.push({ x: vx, y: vy })
-  }
-  if (vizType.value === 'line') {
-    pairs.sort((a, b) => a.x - b.x)
-    return {
-      trace: {
-        x: pairs.map((p) => p.x),
-        y: pairs.map((p) => p.y),
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: `${vizY.value} by ${vizX.value}`,
-        line: { color: primary, width: 2 },
-        marker: { size: 5, color: border },
-        hovertemplate: `<b>${vizX.value}</b>: %{x}<br><b>${vizY.value}</b>: %{y}<extra></extra>`,
-      },
-      yTitle: vizY.value || 'Value',
-      title: `${vizY.value} over ${vizX.value}`,
-    }
-  }
+/** Reads the live theme tokens so light and dark stay in lockstep. */
+function readTheme(): VizTheme {
+  const root = getComputedStyle(document.documentElement)
+  const get = (name: string, fallback: string): string =>
+    root.getPropertyValue(name).trim() || fallback
   return {
-    trace: {
-      x: pairs.map((p) => p.x),
-      y: pairs.map((p) => p.y),
-      type: 'scatter',
-      mode: 'markers',
-      name: `${vizY.value} vs ${vizX.value}`,
-      marker: { size: 8, color: primary, opacity: 0.8, line: { width: 1, color: border } },
-      hovertemplate: `<b>${vizX.value}</b>: %{x}<br><b>${vizY.value}</b>: %{y}<extra></extra>`,
-    },
-    yTitle: vizY.value || 'Value',
-    title: `Scatter: ${vizY.value} vs ${vizX.value}`,
+    primary: get('--accent', '#2367ec'),
+    border: get('--accent-dark', '#1b58cf'),
+    text: get('--text', '#0f172a'),
+    muted: get('--muted', '#64748b'),
+    grid: get('--line', '#e2e8f0'),
+    surface: get('--surface', '#ffffff'),
+    palette: [
+      get('--accent', '#2367ec'),
+      get('--err', '#ef4444'),
+      get('--ok', '#059669'),
+      get('--warn', '#d97706'),
+      get('--badge-nominal-text', '#7c3aed'),
+      get('--badge-ordinal-text', '#0891b2')
+    ]
+  }
+}
+
+/** The chart request that travels with a pinned chart. */
+function currentSpec(): VizSpec {
+  return {
+    type: vizType.value,
+    x: vizX.value,
+    y: vizY.value,
+    group: vizGroup.value,
+    trendline: trendline.value
   }
 }
 
 function caption(): string {
-  const t = vizType.value
-  if (t === 'histogram') return `Histogram of ${vizX.value}`
-  if (t === 'boxplot') return `Boxplot of ${vizY.value}`
-  if (t === 'bar') return `Mean ${vizY.value} by ${vizX.value}`
-  if (t === 'line') return `Line chart: ${vizY.value} over ${vizX.value}`
-  return `Scatter plot: ${vizY.value} vs ${vizX.value}`
+  return captionFor(currentSpec())
 }
 
 function render(): void {
   const host = plotEl.value
   if (!host) return
-  if (needsX.value && !vizX.value) return
+  if (!vizX.value && vizType.value !== 'histogram') return
   if (needsY.value && !vizY.value) return
 
-  const { trace, yTitle, title } = buildTrace()
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
-  const textColor = isDark ? '#e2e8f0' : '#1e293b'
-  const mutedColor = isDark ? '#94a3b8' : '#64748b'
-  const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)'
-  const zeroLineColor = isDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.15)'
+  const theme = readTheme()
+  const { traces, yTitle, title } = buildTraces({
+    type: vizType.value,
+    x: vizX.value,
+    y: vizY.value,
+    group: vizGroup.value,
+    trendline: trendline.value,
+    columns: state.ds.columns,
+    data: state.ds.data,
+    showValueLabels: showValueLabels.value,
+    theme
+  })
+  if (!traces.length) return
+  const gridColor = theme.grid
 
   const layout: Record<string, unknown> = {
-    title: { text: title, font: { family: 'inherit', size: 14, color: textColor } },
+    title: { text: title, font: { family: 'inherit', size: 14, color: theme.text } },
     paper_bgcolor: 'transparent',
     plot_bgcolor: 'transparent',
-    font: { family: 'inherit', color: textColor, size: 11 },
+    font: { family: 'inherit', color: theme.text, size: 11 },
     margin: { t: 48, r: 24, b: 52, l: 64 },
+    showlegend: traces.length > 1,
     xaxis: {
-      title: { text: needsX.value ? vizX.value : '', font: { color: textColor, size: 12 } },
+      title: { text: vizX.value, font: { color: theme.text, size: 12 } },
       gridcolor: gridColor,
-      zerolinecolor: zeroLineColor,
+      zerolinecolor: gridColor,
       linecolor: gridColor,
-      tickfont: { color: mutedColor, size: 11 },
+      tickfont: { color: theme.muted, size: 11 }
     },
     yaxis: {
-      title: { text: yTitle, font: { color: textColor, size: 12 } },
+      title: { text: yTitle, font: { color: theme.text, size: 12 } },
       gridcolor: gridColor,
-      zerolinecolor: zeroLineColor,
+      zerolinecolor: gridColor,
       linecolor: gridColor,
-      tickfont: { color: mutedColor, size: 11 },
+      tickfont: { color: theme.muted, size: 11 }
     },
     hoverlabel: {
-      bgcolor: isDark ? '#1e293b' : '#ffffff',
-      bordercolor: isDark ? '#475569' : '#cbd5e1',
-      font: { color: textColor, family: 'inherit' },
+      bgcolor: theme.surface,
+      bordercolor: theme.grid,
+      font: { color: theme.text, family: 'inherit' }
     },
-    modebar: { bgcolor: 'transparent', color: mutedColor, activecolor: '#3b82f6' },
-    autosize: true,
+    modebar: { bgcolor: 'transparent', color: theme.muted, activecolor: theme.primary },
+    autosize: true
   }
   const config: Record<string, unknown> = {
     responsive: true,
     displaylogo: false,
-    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    modeBarButtonsToRemove: ['lasso2d', 'select2d']
   }
-  void Plotly.react(host, [trace], layout, config)
+  void loadPlotly().then((Plotly) => Plotly.react(host, traces, layout, config))
 }
 
 function onTypeChange(): void {
@@ -276,8 +235,9 @@ async function onPin(): Promise<void> {
   if (!host) return
   status.value = ''
   try {
+    const Plotly = await loadPlotly()
     const url = await Plotly.toImage(host, { format: 'svg', width: 900, height: 600 })
-    emit('pin', { caption: caption(), svg: decodeDataUrl(url) })
+    emit('pin', { caption: caption(), svg: decodeDataUrl(url), spec: currentSpec() })
     status.value = 'Chart pinned to Result.'
   } catch (err) {
     status.value = `The chart could not be pinned. ${err instanceof Error ? err.message : ''}`.trim()
@@ -288,33 +248,12 @@ async function onPin(): Promise<void> {
  *  `blob:` image, which the app's CSP (img-src has no `blob:`) blocks — here and
  *  in the shipped WebView. A `data:` SVG image is allowed, so decode → <img> →
  *  canvas → PNG stays inside the policy. */
-async function svgToPngBytes(svgMarkup: string, width: number, height: number): Promise<Uint8Array> {
-  const img = new Image()
-  img.width = width
-  img.height = height
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve()
-    img.onerror = () => reject(new Error('the chart image could not be rasterized.'))
-    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`
-  })
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) throw new Error('the canvas is unavailable.')
-  ctx.drawImage(img, 0, 0, width, height)
-  const png = canvas.toDataURL('image/png')
-  const bin = atob(png.slice(png.indexOf(',') + 1))
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes
-}
-
 async function onExportPng(): Promise<void> {
   const host = plotEl.value
   if (!host) return
   status.value = ''
   try {
+    const Plotly = await loadPlotly()
     const url = await Plotly.toImage(host, { format: 'svg', width: 1200, height: 800 })
     const bytes = await svgToPngBytes(decodeDataUrl(url), 1200, 800)
     // Same native save path as the HTML export: the user picks the location and
@@ -346,8 +285,20 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
-    vizType.value = props.type
     status.value = ''
+    if (props.initialSpec) {
+      vizType.value = props.initialSpec.type
+      vizX.value = props.initialSpec.x
+      vizY.value = props.initialSpec.y
+      vizGroup.value = props.initialSpec.group ?? ''
+      trendline.value = props.initialSpec.trendline ?? false
+    } else {
+      vizType.value = props.type
+      vizX.value = ''
+      vizY.value = ''
+      vizGroup.value = ''
+      trendline.value = false
+    }
     seedSelection()
     void nextTick(() => {
       const el = dlg.value
@@ -357,6 +308,30 @@ watch(
   },
   { immediate: true }
 )
+
+// Value labels change the bar categories, so the chart has to be rebuilt.
+watch(showValueLabels, () => {
+  if (props.open) render()
+})
+
+// The theme tokens live on <html data-theme>: watch the switch so the chart
+// repaints in the new palette instead of keeping the old colours.
+let themeObserver: MutationObserver | null = null
+
+onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    if (props.open) render()
+  })
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme']
+  })
+})
+
+onUnmounted(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
+})
 </script>
 
 <template>
@@ -387,20 +362,45 @@ watch(
     </div>
 
     <div class="visualize-body">
+      <!-- Chart type strip (design.md §4.4: icon strip, not a bare dropdown) -->
+      <div class="viz-type-strip" role="group" aria-label="Chart type">
+        <button
+          v-for="t in (['scatter', 'bar', 'line', 'histogram', 'boxplot'] as VizType[])"
+          :key="t"
+          type="button"
+          class="viz-type-btn"
+          :class="{ 'is-active': vizType === t }"
+          :aria-pressed="vizType === t"
+          :title="t.charAt(0).toUpperCase() + t.slice(1)"
+          @click="vizType = t; onTypeChange()"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <template v-if="t === 'scatter'">
+              <circle cx="4" cy="11" r="1.6" /><circle cx="8" cy="6" r="1.6" /><circle cx="12" cy="9" r="1.6" />
+            </template>
+            <template v-else-if="t === 'bar'">
+              <line x1="3" y1="13" x2="13" y2="13" />
+              <rect x="4" y="7" width="2.4" height="6" /><rect x="8" y="4" width="2.4" height="9" /><rect x="11" y="9" width="2.4" height="4" />
+            </template>
+            <template v-else-if="t === 'line'">
+              <polyline points="2,12 6,7 9,9 14,4" />
+            </template>
+            <template v-else-if="t === 'histogram'">
+              <rect x="2.5" y="8" width="2.6" height="5" /><rect x="6" y="4" width="2.6" height="9" /><rect x="9.5" y="6" width="2.6" height="7" />
+            </template>
+            <template v-else>
+              <rect x="4" y="6" width="8" height="6" rx="1" /><line x1="8" y1="3" x2="8" y2="13" /><line x1="2.5" y1="6" x2="2.5" y2="12" /><line x1="13.5" y1="6" x2="13.5" y2="12" />
+            </template>
+          </svg>
+          <span>{{ t.charAt(0).toUpperCase() + t.slice(1) }}</span>
+        </button>
+      </div>
+
       <div class="visualize-controls-bar">
         <div class="viz-field">
-          <label for="vizType">Chart Type</label>
-          <select id="vizType" v-model="vizType" class="viz-select" @change="onTypeChange">
-            <option value="scatter">Scatter Plot</option>
-            <option value="bar">Bar Chart</option>
-            <option value="line">Line Chart</option>
-            <option value="histogram">Histogram</option>
-            <option value="boxplot">Boxplot</option>
-          </select>
-        </div>
-        <div v-if="needsX" class="viz-field">
-          <label for="vizX">X Variable</label>
+          <label for="vizX">{{ vizType === 'boxplot' ? 'Group (optional)' : 'X Variable' }}</label>
           <select id="vizX" v-model="vizX" class="viz-select" @change="render">
+            <option v-if="vizType === 'boxplot'" value="">None</option>
             <option v-for="c in availableXCols" :key="c.name" :value="c.name">{{ c.name }}</option>
           </select>
         </div>
@@ -409,6 +409,19 @@ watch(
           <select id="vizY" v-model="vizY" class="viz-select" @change="render">
             <option v-for="c in availableYCols" :key="c.name" :value="c.name">{{ c.name }}</option>
           </select>
+        </div>
+        <div v-if="vizType !== 'histogram' && vizType !== 'boxplot'" class="viz-field">
+          <label for="vizGroup">Group / Color by</label>
+          <select id="vizGroup" v-model="vizGroup" class="viz-select" @change="render">
+            <option value="">None</option>
+            <option v-for="c in availableGroupCols" :key="c.name" :value="c.name">{{ c.name }}</option>
+          </select>
+        </div>
+        <div v-if="vizType === 'scatter'" class="viz-field">
+          <label class="viz-toggle">
+            <input v-model="trendline" type="checkbox" class="option-checkbox" @change="render" />
+            <span>OLS trendline</span>
+          </label>
         </div>
       </div>
       <div class="visualize-plot-container">
@@ -433,3 +446,52 @@ watch(
     </div>
   </dialog>
 </template>
+
+<style scoped>
+.viz-type-strip {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--chrome);
+  flex-shrink: 0;
+}
+
+.viz-type-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.viz-type-btn:hover {
+  color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.viz-type-btn.is-active {
+  background: var(--panel);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.viz-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+</style>

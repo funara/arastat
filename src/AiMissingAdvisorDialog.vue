@@ -686,14 +686,44 @@ async function loadAiRec(): Promise<void> {
   }
 }
 
-// Auto-reset cached AI recommendations when dataset is closed, empty, or replaced
+function resetModalState(): void {
+  step.value = 1
+  noticesExpanded.value = false
+  missingExpanded.value = false
+  scanStatus.value = 'loading'
+  scanError.value = ''
+  stagedKeys.value.clear()
+  stagedImputes.value = []
+  activityLog.value = []
+  dismissedIssueKeys.value.clear()
+  dismissedMissingNames.value.clear()
+  activeFocusVar.value = null
+  fixStatus.value = ''
+  resetAiAdvisorCache()
+  aiReqSeq++
+  aiRecLoading.value = false
+}
+
+// Auto-reset modal state when dataset is closed, empty, or replaced
 watch(
-  () => state.filename,
-  (newVal, oldVal) => {
-    if (newVal !== oldVal) {
-      resetAiAdvisorCache()
-      aiReqSeq++
-      aiRecLoading.value = false
+  () => [state.filename, state.ds] as const,
+  ([newFile, newDs], [oldFile, oldDs]) => {
+    if (newFile !== oldFile || newDs !== oldDs) {
+      resetModalState()
+      if (props.modelValue) {
+        analyzeDataset()
+        void nextTick().then(() => {
+          healthTick.value++
+          baseline.value = {
+            complete: readiness.value.completeRows,
+            rows: readiness.value.rows
+          }
+          if (scanStatus.value !== 'error') scanStatus.value = 'ready'
+          if (state.ds.columns.length) {
+            void loadAiRec()
+          }
+        })
+      }
     }
   }
 )
@@ -702,9 +732,7 @@ watch(
   () => state.ds.columns.length,
   (newLen) => {
     if (newLen === 0) {
-      resetAiAdvisorCache()
-      aiReqSeq++
-      aiRecLoading.value = false
+      resetModalState()
     }
   }
 )
@@ -803,6 +831,11 @@ const modalCard = ref<HTMLElement | null>(null)
 let lastFocused: Element | null = null
 function close(): void {
   emit('update:modelValue', false)
+  noticesExpanded.value = false
+  missingExpanded.value = false
+  step.value = 1
+  activeFocusVar.value = null
+  fixStatus.value = ''
   if (lastFocused instanceof HTMLElement) lastFocused.focus()
 }
 function handleKeyDown(ev: KeyboardEvent): void {
@@ -842,22 +875,10 @@ watch(
   () => [props.modelValue, props.focusVar] as const,
   ([open, fv]) => {
     if (open) {
-      if (!state.ds.columns.length) {
-        resetAiAdvisorCache()
-      }
+      resetModalState()
       activeFocusVar.value = fv ?? null
-      scanStatus.value = 'loading'
-      scanError.value = ''
-      stagedKeys.value.clear()
-      stagedImputes.value = []
-      activityLog.value = []
-      dismissedIssueKeys.value.clear()
-      dismissedMissingNames.value.clear()
-      aiReqSeq++
-      aiRecLoading.value = false
-      fixStatus.value = ''
-      analyzeDataset()
       step.value = fv ? 2 : 1
+      analyzeDataset()
       void nextTick().then(() => {
         healthTick.value++
         baseline.value = {
@@ -871,6 +892,12 @@ watch(
           void loadAiRec()
         }
       })
+    } else {
+      noticesExpanded.value = false
+      missingExpanded.value = false
+      step.value = 1
+      activeFocusVar.value = null
+      fixStatus.value = ''
     }
   }
 )
@@ -1077,7 +1104,7 @@ watch(
             </div>
 
             <!-- 3. Primary Audit Findings: Advisory diagnosis cards (Action is only in Stage 2) -->
-            <div v-if="visibleIssues.length || advisoryItems.length" class="dha-findings-row" :class="{ 'has-expanded': noticesExpanded || missingExpanded }">
+            <div v-if="visibleIssues.length || advisoryItems.length" class="dha-findings-row">
               <!-- Card 1: Column Notices (Expandable) -->
               <div class="dha-finding-card is-notices" :class="{ 'is-expanded': noticesExpanded }">
                 <div class="finding-card-icon is-notices">
@@ -1123,7 +1150,7 @@ watch(
                       </div>
                       <div class="dha-impact-body" :title="issue.evidence ? `${issue.message} (${issue.evidence})` : issue.message">
                         <span class="dha-impact-msg">{{ issue.message }}</span>
-                        <span v-if="issue.evidence" class="dha-impact-evid">&middot; {{ issue.evidence }}</span>
+                        <span v-if="issue.evidence && !issue.message.includes(issue.evidence)" class="dha-impact-evid">&middot; {{ issue.evidence }}</span>
                       </div>
                     </div>
                   </div>
@@ -2015,10 +2042,10 @@ watch(
 
 .dha-impact-item {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  padding: 6px 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding: 8px 10px;
   border-radius: 6px;
   background: var(--surface-subtle);
   border: 1px solid var(--line-subtle);
@@ -2031,7 +2058,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .dha-impact-col-name {
@@ -2063,32 +2090,28 @@ watch(
 }
 
 .dha-impact-body {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: block;
   font-size: 11px;
+  line-height: 1.45;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
   min-width: 0;
 }
 
 .dha-impact-msg {
   color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 1;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .dha-impact-evid {
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 1;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* Polished & Simpler Workflow Footer */
@@ -2102,11 +2125,11 @@ watch(
 .dha-footer-stepper {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   background: var(--surface-subtle);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 6px;
+  border-radius: 6px;
+  padding: 2px 3px;
   user-select: none;
   flex-shrink: 0;
 }
@@ -2116,10 +2139,11 @@ watch(
   align-items: center;
   justify-content: center;
   color: var(--faint);
-  opacity: 0.55;
+  opacity: 0.5;
   user-select: none;
   pointer-events: none;
-  padding: 0 1px;
+  padding: 0;
+  margin: 0 1px;
 }
 
 .dha-step-sep-icon {
@@ -2130,11 +2154,11 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   background: transparent;
   border: 1px solid transparent;
-  padding: 4px 12px;
-  border-radius: 999px;
+  padding: 3px 9px;
+  border-radius: 4px;
   cursor: pointer;
   color: var(--muted);
   font-family: inherit;
@@ -2159,7 +2183,7 @@ watch(
   border-color: var(--line-strong);
   color: var(--text);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .dha-footer-step-btn.is-done {

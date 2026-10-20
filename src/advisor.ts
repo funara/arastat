@@ -9,7 +9,7 @@
 // explicit args so node tests can import this); the diagnose seam reads
 // the dataset store and fails soft (Tier1 fails soft, never throws).
 import { ref } from 'vue'
-import { schemaById } from './specs.ts'
+import { schemaById, defaultValues } from './specs.ts'
 import type { AnalysisSchema } from './specs.ts'
 import { profileDataset } from './profile.ts'
 import { rowsWithMissing } from './missing.ts'
@@ -176,6 +176,153 @@ function scaleGroupPattern(group: ColumnMeta, hint?: number): AdvisorPatternId {
   const labels = group.valueLabels ? Object.keys(group.valueLabels).length : 0
   const levels = hint ?? (labels >= 2 ? labels : 2)
   return levels >= 3 ? 'scale-multigroup' : 'scale-2group'
+}
+
+// --- shared group-level reader (DRY: advisor + both dialogs) ----------------
+
+export interface GroupLevel {
+  /** Raw cell value as text (first-appearance order, like statslib.py `levels()`). */
+  value: string
+  /** `valueLabels` text when the column defines one, else the raw value. */
+  label: string
+  /** Non-missing cell count for this level. */
+  n: number
+}
+
+/**
+ * Distinct non-missing levels of a column with counts, in first-appearance
+ * order (statslib.py `levels()` uses the same order, so the preview matches
+ * the eventual run). Skips user-missing cells (null, '' and the column's own
+ * sentinel codes) and resolves `valueLabels` for display.
+ */
+export function distinctGroupLevels(colName: string): GroupLevel[] {
+  const meta = state.ds.columns.find((c) => c.name === colName)
+  const raw = (state.ds.data[colName] ?? []) as Array<number | string | null>
+  const out: GroupLevel[] = []
+  const at = new Map<string, number>()
+  for (const v of raw) {
+    if (v === null || v === '') continue
+    if (meta && isUserMissing(meta, v)) continue
+    const value = String(v)
+    const i = at.get(value)
+    if (i === undefined) {
+      at.set(value, out.length)
+      out.push({ value, label: meta?.valueLabels?.[value] ?? value, n: 1 })
+    } else {
+      const slot = out[i]
+      if (slot) slot.n++
+    }
+  }
+  return out
+}
+
+// --- robust (non-parametric) fallback map (pure) ----------------------------
+
+/** Parametric procedure -> robust counterpart when its assumption fails. */
+export const ROBUST_FALLBACK: Record<string, string> = {
+  ttest_independent: 'mannwhitney_u',
+  ttest_paired: 'wilcoxon_signedrank',
+  ttest_onesample: 'wilcoxon_one_sample',
+  anova_oneway: 'kruskal_wallis',
+  welch_anova: 'kruskal_wallis',
+  correlation: 'kendall_tau'
+}
+
+export interface RobustFallback {
+  analysisId: string
+  options: Record<string, unknown>
+}
+
+/**
+ * The non-parametric counterpart of a parametric analysis with the same
+ * variables, or null when the analysis has no counterpart. `target` overrides
+ * the default mapping (e.g. ANOVA → Welch ANOVA when variances differ). The
+ * returned options are a complete, engine-valid spec (defaults filled in) so
+ * the fallback can run without another round trip (pure).
+ */
+export function robustFallback(
+  analysisId: string,
+  spec: Record<string, unknown>,
+  target?: string
+): RobustFallback | null {
+  const to = target ?? ROBUST_FALLBACK[analysisId]
+  if (!to) return null
+  const schema = schemaById(to)
+  if (!schema) return null
+  const initial: Record<string, unknown> = {}
+  if (analysisId === 'ttest_onesample') {
+    // wilcoxon_one_sample takes the benchmark as `mu`, not `testValue`.
+    initial['mu'] = spec['testValue']
+  }
+  if (analysisId === 'correlation') {
+    // kendall_tau takes two columns, not a variable list.
+    const vars = Array.isArray(spec['variables']) ? (spec['variables'] as unknown[]).map(String) : []
+    if (vars.length < 2) return null
+    initial['a'] = vars[0]
+    initial['b'] = vars[1]
+  }
+  for (const o of schema.options) {
+    if (o.key in initial) continue
+    const v = spec[o.key]
+    if (v !== undefined) initial[o.key] = v
+  }
+  return { analysisId: to, options: defaultValues(schema, initial) }
+}
+
+/**
+ * The robust counterpart for a violated assumption (pure). `violatedLabels`
+ * are the parsed assumption names (e.g. "Shapiro-Wilk", "Levene").
+ */
+export function fallbackForViolation(analysisId: string, violatedLabels: string[]): string | null {
+  if (!violatedLabels.length) return null
+  const nonNormal = violatedLabels.some((l) => /shapiro/i.test(l))
+  const unequal = violatedLabels.some((l) => /levene/i.test(l))
+  switch (analysisId) {
+    case 'ttest_independent':
+      return nonNormal ? 'mannwhitney_u' : null
+    case 'ttest_paired':
+      return nonNormal ? 'wilcoxon_signedrank' : null
+    case 'ttest_onesample':
+      return nonNormal ? 'wilcoxon_one_sample' : null
+    case 'anova_oneway':
+    case 'welch_anova':
+      if (nonNormal) return 'kruskal_wallis'
+      if (unequal) return 'welch_anova'
+      return null
+    case 'correlation':
+      return nonNormal ? 'kendall_tau' : null
+    default:
+      return null
+  }
+}
+
+/**
+ * The test the live assumption outcome points at (null = keep the default
+ * list order). Shapiro drives the rank-based tests, Levene drives Welch.
+ */
+export function recommendedTestId(
+  pattern: AdvisorPatternId | 'unknown',
+  report: DiagnoseReport | null,
+  cols: string[]
+): string | null {
+  if (!report) return null
+  const sp = minShapiroP(report, cols)
+  const lv = leveneP(report)
+  if (pattern === 'scale-2group') {
+    return sp !== null && sp < 0.05 ? 'mannwhitney_u' : null
+  }
+  if (pattern === 'scale-multigroup') {
+    if (sp !== null && sp < 0.05) return 'kruskal_wallis'
+    if (lv !== null && lv < 0.05) return 'welch_anova'
+    return null
+  }
+  if (pattern === 'paired-scale') {
+    return sp !== null && sp < 0.05 ? 'wilcoxon_signedrank' : null
+  }
+  if (pattern === 'single-scale') {
+    return sp !== null && sp < 0.05 ? 'wilcoxon_one_sample' : null
+  }
+  return null
 }
 
 // --- diagnose seam (ONE invoke site; engine read-only) ----------------------

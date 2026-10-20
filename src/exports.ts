@@ -208,3 +208,39 @@ export function buildResultsText(runs: Run[], generatedAt: string): string {
   }
   return lines.join('\n')
 }
+
+/**
+ * Rasterize an SVG chart to PNG bytes. Plotly's own PNG path routes through a
+ * `blob:` image, which the app's CSP (img-src has no `blob:`) blocks. A `data:`
+ * SVG image is allowed, so decode → <img> → canvas → PNG stays in policy.
+ */
+export async function svgToPngBytes(svgMarkup: string, width: number, height: number): Promise<Uint8Array> {
+  const img = new Image()
+  img.width = width
+  img.height = height
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve()
+    img.onerror = () => reject(new Error('the chart image could not be rasterized.'))
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`
+  })
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('the canvas is unavailable.')
+  ctx.drawImage(img, 0, 0, width, height)
+  const png = canvas.toDataURL('image/png')
+  const bin = atob(png.slice(png.indexOf(',') + 1))
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes
+}
+
+/** Save a chart SVG as a PNG through the native file dialog. */
+export async function saveChartPng(svg: string, filename: string): Promise<string> {
+  const bytes = await svgToPngBytes(svg, 1200, 800)
+  const path = await window.ara.file.save(filename)
+  if (!path) return ''
+  const ok = await window.ara.file.writeBytes(path, bytes.buffer as ArrayBuffer)
+  return ok ? path : ''
+}

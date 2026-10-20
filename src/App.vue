@@ -6,7 +6,7 @@ import ResultsPane from "./ResultsPane.vue";
 import AiDock from "./AiDock.vue";
 import AnalysisDialog from "./AnalysisDialog.vue";
 import TestAdvisorDialog from "./TestAdvisorDialog.vue";
-import VisualizeDialog, { type VizType } from "./VisualizeDialog.vue";
+import VisualizeDialog, { type VizType, type VizSpec } from "./VisualizeDialog.vue";
 import DataTransformDialog, {
   type TransformMode,
 } from "./DataTransformDialog.vue";
@@ -30,16 +30,20 @@ import {
 } from "./store.ts";
 import { defaultMeta, datasetFromRows } from "./io/types.ts";
 import { importCsvBytes } from "./io/csv.ts";
-import { schemaById, type AnalysisSchema } from "./specs.ts";
+import { schemaById, defaultChartForSpec, type AnalysisSchema, type ChartSpec } from "./specs.ts";
 import { runAnalysis } from "./runAnalysis.ts";
 import {
   applyNotification,
   snapshotRuns,
   restoreRuns,
   pinChartElement,
+  updatePinnedChart,
   type Run,
+  type ResultTable,
+  type ResultChart,
 } from "./results.ts";
-import { buildResultsHtml, copyRunsToClipboard } from "./exports.ts";
+import { buildResultsHtml, copyRunsToClipboard, saveChartPng } from "./exports.ts";
+import { extractApaSummary } from "./format.ts";
 import { runsState } from "./results.ts";
 import { openWithDialog, saveWithDialog, ioMessage } from "./fileOps.ts";
 import { resetAiAdvisorCache } from "./AiMissingAdvisorDialog.vue";
@@ -124,11 +128,16 @@ function onAskAi(query: string): void {
 const dlgSchema = ref<AnalysisSchema | null>(null);
 const dlgInitial = ref<Record<string, unknown> | undefined>(undefined);
 const dlgRerunId = ref<string | undefined>(undefined);
+// The run's own missing policy and companion plot, restored when editing an
+// existing result so the dialog does not silently change them.
+const dlgMissingPolicy = ref<"listwise" | "pairwise" | undefined>(undefined);
+const dlgIncludeChart = ref<boolean | undefined>(undefined);
 
 function openAnalysis(
   id: string,
   initial?: Record<string, unknown>,
   rerunId?: string,
+  opts?: { missingPolicy?: "listwise" | "pairwise"; includeChart?: boolean },
 ): void {
   closeMenus();
   const schema = schemaById(id);
@@ -139,6 +148,8 @@ function openAnalysis(
   dlgSchema.value = schema;
   dlgInitial.value = initial;
   dlgRerunId.value = rerunId;
+  dlgMissingPolicy.value = opts?.missingPolicy;
+  dlgIncludeChart.value = opts?.includeChart;
 }
 
 const testAdvisorOpen = ref(false);
@@ -173,6 +184,8 @@ function openHealthAdvisor(colName?: string): void {
 async function onDialogRun(payload: {
   schema: AnalysisSchema;
   values: Record<string, unknown>;
+  chart?: ChartSpec | null;
+  missingPolicy?: "listwise" | "pairwise";
 }): Promise<void> {
   const schema = payload.schema;
   const values = { ...payload.values };
@@ -180,10 +193,13 @@ async function onDialogRun(payload: {
   dlgSchema.value = null;
   dlgInitial.value = undefined;
   dlgRerunId.value = undefined;
+  dlgMissingPolicy.value = undefined;
+  dlgIncludeChart.value = undefined;
   expandResultsPane();
   await runAnalysis(schema.id, values, {
-    missingPolicy: schema.missingDefault,
+    missingPolicy: payload.missingPolicy ?? schema.missingDefault,
     runId: rerunId,
+    chart: payload.chart ?? undefined,
   });
 }
 
@@ -206,12 +222,25 @@ function expandResultsPane(): void {
   showResults.value = true;
 }
 /* Visualize dialog: the extracted component owns chart rendering, so App only
-   records the request (chart type + preselected columns) and pins what comes back. */
+   records the request (chart type + preselected columns) and pins what comes back.
+   `editRunId` re-opens a pinned chart for editing; the next pin replaces it. */
 const visualizeOpen = ref(false);
-const visualizeRequest = ref<{ type: VizType; x: string; y: string }>({
+const visualizeRequest = ref<{
+  type: VizType;
+  x: string;
+  y: string;
+  group: string;
+  trendline: boolean;
+  editRunId: string;
+  initialSpec: VizSpec | null;
+}>({
   type: "scatter",
   x: "",
   y: "",
+  group: "",
+  trendline: false,
+  editRunId: "",
+  initialSpec: null,
 });
 
 function openVisualize(
@@ -220,12 +249,54 @@ function openVisualize(
   defaultY?: string,
 ): void {
   closeMenus();
-  visualizeRequest.value = { type, x: defaultX ?? "", y: defaultY ?? "" };
+  visualizeRequest.value = {
+    type,
+    x: defaultX ?? "",
+    y: defaultY ?? "",
+    group: "",
+    trendline: false,
+    editRunId: "",
+    initialSpec: null,
+  };
   visualizeOpen.value = true;
 }
 
-function pinChart(payload: { caption: string; svg: string }): void {
-  pinChartElement(payload.caption, payload.svg);
+/** Re-open a pinned chart so its axes, type and grouping can be edited. */
+function editPinnedChart(run: Run): void {
+  closeMenus();
+  const spec = run.spec as Partial<VizSpec>;
+  visualizeRequest.value = {
+    type: spec.type ?? "scatter",
+    x: spec.x ?? "",
+    y: spec.y ?? "",
+    group: spec.group ?? "",
+    trendline: spec.trendline ?? false,
+    editRunId: run.runId,
+    initialSpec: {
+      type: spec.type ?? "scatter",
+      x: spec.x ?? "",
+      y: spec.y ?? "",
+      group: spec.group ?? "",
+      trendline: spec.trendline ?? false,
+    },
+  };
+  visualizeOpen.value = true;
+}
+
+function pinChart(payload: {
+  caption: string;
+  svg: string;
+  spec: VizSpec;
+}): void {
+  const editRunId = visualizeRequest.value.editRunId;
+  const spec = { ...payload.spec } as unknown as Record<string, unknown>;
+  if (editRunId && updatePinnedChart(editRunId, payload.caption, payload.svg, spec)) {
+    visualizeRequest.value.editRunId = "";
+    expandResultsPane();
+    toast("Chart updated.");
+    return;
+  }
+  pinChartElement(payload.caption, payload.svg, spec);
   expandResultsPane();
   toast("Chart pinned to Result.");
 }
@@ -345,6 +416,18 @@ function openAbout(): void {
   aiSettingsOpen.value = true;
 }
 
+const updateModalRef = ref<InstanceType<typeof UpdateRestartModal> | null>(null);
+
+function openOfficeLink(): void {
+  closeMenus();
+  window.open("https://office.adhirahmadian.id", "_blank");
+}
+
+function checkForUpdates(): void {
+  closeMenus();
+  updateModalRef.value?.checkNow();
+}
+
 function onAiSettingsSaved(t: number): void {
   aiPushThreshold.value = t;
 }
@@ -445,19 +528,33 @@ function openAuthorLink(): void {
 }
 
 function fixOptions(run: Run): void {
-  if (run.analysisId === "visualize" || run.analysisId === "pinned_chart")
+  if (run.analysisId === "visualize" || run.analysisId === "pinned_chart") {
+    editPinnedChart(run);
     return;
-  openAnalysis(run.analysisId, { ...run.spec }, run.runId);
+  }
+  // Restore the run's own missing policy and companion plot: editing options
+  // must not silently change what the result card shows.
+  openAnalysis(
+    run.analysisId,
+    { ...run.spec },
+    run.runId,
+    {
+      missingPolicy:
+        run.missingPolicy === "pairwise" ? "pairwise" : "listwise",
+      includeChart: !!run.chart,
+    },
+  );
 }
 
 async function onRerun(run: Run): Promise<void> {
   if (run.analysisId === "visualize" || run.analysisId === "pinned_chart")
     return;
   expandResultsPane();
+  // The companion plot rides the run, so a re-run reproduces the same card.
   await runAnalysis(
     run.analysisId,
     { ...run.spec },
-    { missingPolicy: run.missingPolicy, runId: run.runId },
+    { missingPolicy: run.missingPolicy, runId: run.runId, chart: run.chart },
   );
 }
 
@@ -494,6 +591,95 @@ async function copyApaRun(run: Run): Promise<void> {
 function closeRun(run: Run): void {
   const i = runsState.runs.findIndex((r) => r.runId === run.runId);
   if (i >= 0) runsState.runs.splice(i, 1);
+}
+
+/** Copy the one-line APA citation of a run (the verdict chip). */
+async function copySummary(run: Run): Promise<void> {
+  const summary = extractApaSummary(run);
+  if (!summary) {
+    toast("This result has no APA citation to copy.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(summary.text);
+    resultsPaneRef.value?.markSummaryCopied(run);
+    toast("APA citation copied.");
+  } catch {
+    toast("The clipboard could not be written. Try again.");
+  }
+}
+
+/** Copy one run's result: the same payload, plus the button's checkmark flash. */
+async function copyRun(run: Run): Promise<void> {
+  if (!run.elements.some((el) => el.kind === "table")) {
+    toast("This result has no tables to copy.");
+    return;
+  }
+  try {
+    await copyRunsToClipboard([run]);
+    resultsPaneRef.value?.markRunCopied(run);
+    toast("Result copied with formatting.");
+  } catch {
+    toast("The clipboard could not be written. Try again.");
+  }
+}
+
+/** Copy one APA table (the per-table copy button). */
+async function copyTable(run: Run, table: ResultTable): Promise<void> {
+  try {
+    await copyRunsToClipboard([{ ...run, elements: [table] }]);
+    toast("Table copied with formatting.");
+  } catch {
+    toast("The clipboard could not be written. Try again.");
+  }
+}
+
+/** Open the Visualizer for a run: a pinned chart keeps its spec, an engine
+    chart is seeded from the analysis' own columns. */
+function openVizForRun(run: Run): void {
+  if (run.analysisId === "visualize") {
+    editPinnedChart(run);
+    return;
+  }
+  const spec = defaultChartForSpec(run.analysisId, run.spec);
+  openVisualize(
+    spec?.type === "hist" ? "histogram" : (spec?.type ?? "scatter"),
+    spec?.x ?? "",
+    spec?.y ?? "",
+  );
+}
+
+/** Save a result chart as a PNG through the native file dialog. */
+async function exportChartPng(run: Run, chart: ResultChart): Promise<void> {
+  if (!chart.svg) {
+    toast("This chart has no image to export.");
+    return;
+  }
+  try {
+    const name = `${(chart.caption || run.title).replace(/[^\w.-]+/g, "_") || "chart"}.png`;
+    const path = await saveChartPng(chart.svg, name);
+    if (!path) return;
+    toast(`Image saved to ${path}.`);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : "The image could not be exported.");
+  }
+}
+
+/** Empty-state quick starts: the three fastest ways into the workbench. */
+function quickStart(kind: "descriptives" | "advisor" | "visualize"): void {
+  if (kind === "advisor") {
+    openTestAdvisor();
+    return;
+  }
+  if (kind === "visualize") {
+    openVisualize();
+    return;
+  }
+  const vars = state.ds.columns
+    .filter((c) => c.type === "numeric" && (c.measure === "scale" || c.measure === "ratio"))
+    .map((c) => c.name)
+    .slice(0, 6);
+  openAnalysis("descriptives", { variables: vars });
 }
 
 async function exportHtml(): Promise<void> {
@@ -769,7 +955,7 @@ function onDialogBackdrop(e: MouseEvent, el: HTMLDialogElement | null): void {
 /* ---------- Menus Behavior ---------- */
 const activeMenu = ref<string | null>(null);
 const isMenuBarActive = ref(false);
-const MENU_LIST = ["file", "edit", "data", "transform", "visualize", "analyze"];
+const MENU_LIST = ["file", "edit", "data", "transform", "visualize", "analyze", "about"];
 const openSub = ref<string | null>(null);
 
 type MenuName = (typeof MENU_LIST)[number];
@@ -1718,11 +1904,41 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- About -->
-          <div class="menu-item">
-            <button class="menu-btn" type="button" @click="openAbout">
+          <!-- About Menu -->
+          <div class="menu-item" :class="{ open: activeMenu === 'about' }">
+            <button
+              class="menu-btn"
+              aria-haspopup="menu"
+              :aria-expanded="activeMenu === 'about'"
+              @click.stop="toggleMenu('about')"
+              @mouseenter="onMenuMouseEnter('about')"
+            >
               About
             </button>
+            <div class="dropdown" role="menu" aria-label="About">
+              <button
+                class="dd-row"
+                role="menuitem"
+                @click.stop="openAbout"
+              >
+                About ARAStat
+              </button>
+              <button
+                class="dd-row"
+                role="menuitem"
+                @click.stop="openOfficeLink"
+              >
+                ARA AI Ecosystem ↗
+              </button>
+              <div class="dd-sep"></div>
+              <button
+                class="dd-row"
+                role="menuitem"
+                @click.stop="checkForUpdates"
+              >
+                Check for Updates…
+              </button>
+            </div>
           </div>
         </nav>
       </div>
@@ -2269,8 +2485,14 @@ onBeforeUnmount(() => {
         ref="resultsPaneRef"
         @export-html="act('export-html')"
         @copy-text="act('results-copy-text')"
-        @copy-run="copyApaRun"
+        @copy-run="copyRun"
         @copy-apa="copyApaRun"
+        @copy-summary="copySummary"
+        @copy-table="copyTable"
+        @open-analysis="(id, opts) => openAnalysis(id, opts)"
+        @open-viz="openVizForRun"
+        @export-chart="exportChartPng"
+        @quick-start="quickStart"
         @fix-options="fixOptions"
         @rerun="onRerun"
         @clear-all="clearAllRuns"
@@ -2368,6 +2590,8 @@ onBeforeUnmount(() => {
       v-if="dlgSchema"
       :schema="dlgSchema"
       :initial="dlgInitial"
+      :initial-missing-policy="dlgMissingPolicy"
+      :initial-include-chart="dlgIncludeChart"
       @close="dlgSchema = null"
       @run="onDialogRun"
     />
@@ -2389,7 +2613,7 @@ onBeforeUnmount(() => {
     />
 
     <!-- Post-restart changelog (shown once when the updater flags a version bump) -->
-    <UpdateRestartModal />
+    <UpdateRestartModal ref="updateModalRef" />
 
     <!-- AI Settings / Google Key Guide / About (AiSettingsDialog.vue) -->
     <AiSettingsDialog
@@ -2445,6 +2669,7 @@ onBeforeUnmount(() => {
       :type="visualizeRequest.type"
       :default-x="visualizeRequest.x"
       :default-y="visualizeRequest.y"
+      :initial-spec="visualizeRequest.initialSpec"
       @close="visualizeOpen = false"
       @pin="pinChart"
     />

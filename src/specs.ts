@@ -347,3 +347,87 @@ export function specSummary(values: Record<string, unknown>): string {
     .map(([k, val]) => `${k} = ${Array.isArray(val) ? val.join(', ') : String(val)}`)
     .join('; ')
 }
+
+/** Chart request the engine already renders from the analysis's own columns. */
+export interface ChartSpec {
+  type: 'scatter' | 'bar' | 'hist' | 'line'
+  x: string
+  y?: string
+  group?: string
+  title?: string
+}
+
+/**
+ * The natural companion plot for an analysis (pure). The engine renders
+ * `scatter`/`bar`/`hist`/`line` from the run's own columns, so no new RPC
+ * endpoint or schema key is needed - the chart rides the existing
+ * `opts.chart` parameter. Returns null when no honest plot exists (pure
+ * frequency tables, cross-tabs, factor analysis - which draws its own scree
+ * plot).
+ */
+export function defaultChartForSpec(analysisId: string, spec: Record<string, unknown>): ChartSpec | null {
+  const str = (k: string): string => (typeof spec[k] === 'string' ? (spec[k] as string) : '')
+  const list = (k: string): string[] =>
+    Array.isArray(spec[k]) ? (spec[k] as unknown[]).map(String).filter(Boolean) : []
+  const hist = (x: string): ChartSpec => ({ type: 'hist', x, title: `Distribution of ${x}` })
+  const bar = (x: string, y: string): ChartSpec => ({ type: 'bar', x, y, title: `Mean ${y} by ${x}` })
+  const scatter = (x: string, y: string): ChartSpec => ({ type: 'scatter', x, y, title: `${y} vs ${x}` })
+
+  switch (analysisId) {
+    case 'descriptives': {
+      const vars = list('variables')
+      return vars.length ? hist(vars[0] as string) : null
+    }
+    case 'frequencies': {
+      const vars = list('variables')
+      return vars.length ? { type: 'bar', x: vars[0] as string, title: `Frequency of ${vars[0]}` } : null
+    }
+    case 'ttest_onesample':
+    case 'wilcoxon_one_sample': {
+      const dep = str('dep')
+      return dep ? hist(dep) : null
+    }
+    case 'ttest_independent':
+    case 'mannwhitney_u': {
+      const dep = str('dep')
+      const group = str('group')
+      if (!dep) return null
+      return group ? bar(group, dep) : hist(dep)
+    }
+    case 'ttest_paired':
+    case 'wilcoxon_signedrank': {
+      const a = str('a')
+      const b = str('b')
+      return a && b ? scatter(a, b) : null
+    }
+    case 'anova_oneway':
+    case 'welch_anova':
+    case 'kruskal_wallis':
+    case 'tukey_hsd': {
+      const dep = str('dep')
+      const factor = str('factor')
+      return dep && factor ? bar(factor, dep) : null
+    }
+    case 'factorial_anova_2way': {
+      const dep = str('dep')
+      const factors = list('factors')
+      return dep && factors.length ? bar(factors[0] as string, dep) : null
+    }
+    case 'correlation': {
+      const vars = list('variables')
+      return vars.length >= 2 ? scatter(vars[0] as string, vars[1] as string) : null
+    }
+    case 'kendall_tau': {
+      const a = str('a')
+      const b = str('b')
+      return a && b ? scatter(a, b) : null
+    }
+    case 'linear_regression': {
+      const dep = str('dep')
+      const predictors = list('predictors')
+      return dep && predictors.length ? scatter(predictors[0] as string, dep) : null
+    }
+    default:
+      return null
+  }
+}

@@ -3,16 +3,29 @@
 // 25 analysis specs. Native <dialog>.showModal() provides Esc-to-close and native focus
 // return to the invoking control.
 import { ref, computed, watch, nextTick } from 'vue'
-import { state, isUserMissing } from './store.ts'
-import { defaultValues, validateValues, type AnalysisSchema, type SpecOption } from './specs.ts'
+import { state } from './store.ts'
+import { defaultValues, validateValues, defaultChartForSpec, type AnalysisSchema, type SpecOption, type ChartSpec } from './specs.ts'
+import { distinctGroupLevels, listwiseForecast } from './advisor.ts'
 import { storageShort, type Measure } from './io/types.ts'
 import { flagStale } from './results.ts'
 import MeasureIcon from './MeasureIcon.vue'
 
-const props = defineProps<{ schema: AnalysisSchema | null; initial?: Record<string, unknown> }>()
+const props = defineProps<{
+  schema: AnalysisSchema | null
+  initial?: Record<string, unknown>
+  /** Restore an existing run's missing policy when editing its options. */
+  initialMissingPolicy?: 'listwise' | 'pairwise'
+  /** Restore an existing run's companion plot when editing its options. */
+  initialIncludeChart?: boolean
+}>()
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'run', payload: { schema: AnalysisSchema; values: Record<string, unknown> }): void
+  (e: 'run', payload: {
+    schema: AnalysisSchema
+    values: Record<string, unknown>
+    chart: ChartSpec | null
+    missingPolicy: 'listwise' | 'pairwise'
+  }): void
 }>()
 
 const dlg = ref<HTMLDialogElement | null>(null)
@@ -23,6 +36,13 @@ const dragOver = ref<string | null>(null)
 // so it never serializes into `values`.
 const variableFilter = ref('')
 const showGuidePopover = ref(false)
+// Focused target slot: drives the incompatible-variable dimming and the
+// shuttle button's target. Empty until the user focuses a slot.
+const activeTargetKey = ref<string | null>(null)
+// Missing-value handling and the companion plot ride the run, never the spec
+// (the engine rejects unknown spec keys).
+const missingPolicy = ref<'listwise' | 'pairwise'>('listwise')
+const includeChart = ref(true)
 
 /**
  * Polishes field hint: strips technical parentheticals like (Scale, e.g., salary)
@@ -72,30 +92,43 @@ let seeding = false
 
 // Both signals + immediate: the dialog mounts on open (App v-if) with the schema
 // already set, so seeding and showModal must also run at mount.
-watch([() => props.schema, () => props.initial], ([s]) => {
-  if (!s) {
-    dlg.value?.close()
-    return
-  }
-  seeding = true
-  values.value = defaultValues(s, props.initial)
-  seeding = false
-  selected.value = null
-  dragOver.value = null
-  variableFilter.value = ''
-  showGuidePopover.value = false
-  nextTick(() => {
-    const el = dlg.value
-    if (el && !el.open) el.showModal()
-  })
-}, { immediate: true })
+watch(
+  [() => props.schema, () => props.initial, () => props.initialMissingPolicy, () => props.initialIncludeChart],
+  ([s]) => {
+    if (!s) {
+      dlg.value?.close()
+      return
+    }
+    seeding = true
+    values.value = defaultValues(s, props.initial)
+    missingPolicy.value = props.initialMissingPolicy ?? s.missingDefault ?? 'listwise'
+    includeChart.value = props.initialIncludeChart ?? true
+    seeding = false
+    selected.value = null
+    dragOver.value = null
+    variableFilter.value = ''
+    showGuidePopover.value = false
+    activeTargetKey.value = null
+    nextTick(() => {
+      const el = dlg.value
+      if (el && !el.open) el.showModal()
+    })
+  },
+  { immediate: true }
+)
 
 // Stale on option edit: a user change dims the latest settled result for this
 // analysis until it is rerun. Seeding is not an edit.
 watch(values, () => {
   if (seeding || !props.schema) return
-  flagStale(props.schema.id, { ...values.value })
+  flagStale(props.schema.id, { ...values.value }, missingPolicy.value)
 }, { deep: true, flush: 'sync' })
+
+// The missing policy changes the result too, so it dims the settled run.
+watch(missingPolicy, (policy) => {
+  if (seeding || !props.schema) return
+  flagStale(props.schema.id, { ...values.value }, policy)
+}, { flush: 'sync' })
 
 function onClose(): void {
   selected.value = null
@@ -149,6 +182,12 @@ function assignTo(key: string, name?: string): boolean {
   if (opt.max !== undefined && cur.length >= opt.max) return false
   values.value[key] = [...cur, target!]
   return true
+}
+
+/** Click on a target box focuses it and places the selected source variable. */
+function onTargetClick(key: string): void {
+  activeTargetKey.value = key
+  assignTo(key)
 }
 
 /** Double-click fallback: first compatible field with room. */
@@ -206,6 +245,7 @@ function onTargetDrop(e: DragEvent, key: string): void {
   dragOver.value = null
   const p = readPayload(e)
   if (!p) return
+  activeTargetKey.value = key
   if (p.from && p.from !== key) {
     if (assignTo(key, p.name)) unassign(p.from, p.name)
   } else {
@@ -219,53 +259,98 @@ function onSourceDrop(e: DragEvent): void {
   if (p?.from) unassign(p.from, p.name)
 }
 
-// --- Group levels (live, read-only) ----------------------------------------
-// The `group` option is the two-group slot (ttest_independent, mannwhitney_u).
-// Its levels are computed from the assigned column's own data, so the guard is
-// about the column, not the analysis id — a different analysis with a 3-level
-// `factor` (ANOVA, Kruskal-Wallis) is untouched.
+// --- Target focus: incompatible variables dim for the focused slot ---------
 
-/** Assigned `group` column name, or '' when this analysis has no group slot. */
-const groupCol = computed(() => {
-  const opt = varOptions.value.find((o) => o.key === 'group')
-  const name = opt ? values.value[opt.key] : null
-  return typeof name === 'string' ? name : ''
-})
+/** True when the slot still waits for a variable. */
+function slotEmpty(o: SpecOption): boolean {
+  if (o.kind === 'variable') return !values.value[o.key]
+  return listFor(o.key).length === 0
+}
 
 /**
- * Distinct non-missing levels with counts in first-appearance order (statslib.py
- * `levels()` uses the same order, so this preview matches the eventual run).
+ * The slot the dimming rule applies to: the one the user focused, else the
+ * first slot still waiting for a variable.
  */
-const groupLevels = computed<Array<{ value: string; n: number }>>(() => {
-  const name = groupCol.value
-  if (!name) return []
-  const meta = state.ds.columns.find((c) => c.name === name)
-  const out: Array<{ value: string; n: number }> = []
-  const at = new Map<string, number>()
-  for (const v of state.ds.data[name] ?? []) {
-    // null and '' are missing here as well as under the column's own rules.
-    if (v === null || v === '' || (meta && isUserMissing(meta, v))) continue
-    const key = String(v)
-    const i = at.get(key)
-    if (i === undefined) {
-      at.set(key, out.length)
-      out.push({ value: key, n: 1 })
-    } else out[i].n++
-  }
-  return out
+const activeTarget = computed<SpecOption | null>(() => {
+  const opts = varOptions.value
+  const active = activeTargetKey.value ? opts.find((o) => o.key === activeTargetKey.value) : undefined
+  if (active) return active
+  return opts.find((o) => slotEmpty(o)) ?? opts[0] ?? null
 })
 
-/** Pre-flight replacement for engine error 1004: never run a non-2-level grouping variable. */
+/** True when the column's measurement scale cannot go into the active slot. */
+function incompatible(name: string): boolean {
+  const opt = activeTarget.value
+  if (!opt || !opt.measures || !opt.measures.length) return false
+  const meta = state.ds.columns.find((c) => c.name === name)
+  if (!meta) return false
+  return !opt.measures.includes(meta.measure)
+}
+
+/** Tooltip naming the measurement scale the active slot needs. */
+const incompatibleHint = computed(() => {
+  const m = activeTarget.value?.measures ?? []
+  if (!m.length) return ''
+  return `Requires ${m.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(' / ')}`
+})
+
+// --- Group levels (live, read-only) ----------------------------------------
+// The `group` option is the two-group slot (ttest_independent, mannwhitney_u)
+// and needs exactly 2 levels; `factor` (ANOVA, Welch, Tukey, Kruskal) needs 2+.
+// Levels come from the shared advisor helper, so the preview matches the run.
+
+/** The grouping slot in use, with the level count it demands. */
+const levelSlot = computed(() => {
+  const groupName = values.value['group']
+  if (typeof groupName === 'string' && groupName) return { key: 'group', name: groupName, exact: 2 }
+  const factorName = values.value['factor']
+  if (typeof factorName === 'string' && factorName) return { key: 'factor', name: factorName, exact: 0 }
+  return null
+})
+
+/** Distinct non-missing levels with counts, in first-appearance order. */
+const groupLevels = computed(() =>
+  levelSlot.value ? distinctGroupLevels(levelSlot.value.name) : []
+)
+
+/** Pre-flight replacement for engine error 1004: never run a grouping variable with the wrong level count. */
 const groupLevelWarning = computed(() => {
-  const name = groupCol.value
-  if (!name || groupLevels.value.length === 2) return ''
-  const title = props.schema?.title ?? 'This test'
+  const slot = levelSlot.value
+  if (!slot) return ''
+  const name = slot.name
   const levels = groupLevels.value
+  const title = props.schema?.title ?? 'This test'
   const listed = levels.map((l) => l.value).join(', ')
   if (!levels.length) return `Column '${name}' has no non-missing values. ${title} needs a grouping column with data — choose another column.`
-  if (levels.length === 1) return `Column '${name}' has 1 distinct group (${listed}). ${title} requires exactly 2 groups — define a second group or choose another column.`
-  return `Column '${name}' has ${levels.length} distinct groups (${listed}). ${title} requires exactly 2 groups — use One-Way ANOVA instead.`
+  if (slot.exact === 2) {
+    if (levels.length === 2) return ''
+    if (levels.length === 1) return `Column '${name}' has 1 distinct group (${listed}). ${title} requires exactly 2 groups — define a second group or choose another column.`
+    return `Column '${name}' has ${levels.length} distinct groups (${listed}). ${title} requires exactly 2 groups — use One-Way ANOVA instead.`
+  }
+  if (levels.length < 2) return `Column '${name}' has 1 distinct group (${listed}). ${title} requires at least 2 groups — define a second group or choose another column.`
+  return ''
 })
+
+// --- Completeness preview (listwise forecast) ------------------------------
+
+/** Columns the current spec reads, in slot order. */
+const referencedNames = computed(() => {
+  const out: string[] = []
+  for (const o of varOptions.value) {
+    if (o.kind === 'variable') {
+      const v = values.value[o.key]
+      if (typeof v === 'string' && v) out.push(v)
+    } else {
+      for (const n of listFor(o.key)) out.push(n)
+    }
+  }
+  return [...new Set(out)]
+})
+
+/** How many rows survive listwise handling for the current selection. */
+const completeness = computed(() =>
+  referencedNames.value.length ? listwiseForecast(referencedNames.value) : null
+)
 
 const problems = computed(() => {
   if (!state.ds.columns.length) return ['Add or import data before running a test']
@@ -280,7 +365,13 @@ const canRun = computed(() => problems.value.length === 0)
 
 function run(): void {
   if (!props.schema || !canRun.value) return
-  emit('run', { schema: props.schema, values: { ...values.value } })
+  const chart = includeChart.value ? defaultChartForSpec(props.schema.id, values.value) : null
+  emit('run', {
+    schema: props.schema,
+    values: { ...values.value },
+    chart,
+    missingPolicy: missingPolicy.value,
+  })
   dlg.value?.close()
 }
 </script>
@@ -392,9 +483,11 @@ function run(): void {
             :key="c.name"
             type="button"
             class="var-row"
+            :class="{ 'is-incompatible': incompatible(c.name) }"
             draggable="true"
             :aria-pressed="selected === c.name"
-            :title="`${c.name} (${c.type}, ${c.measure}) - Click to select or double-click to place`"
+            :aria-disabled="incompatible(c.name) ? 'true' : undefined"
+            :title="incompatible(c.name) ? `${c.name} (${c.measure}) - ${incompatibleHint}` : `${c.name} (${c.type}, ${c.measure}) - Click to select or double-click to place`"
             @click="selected = selected === c.name ? null : c.name"
             @dblclick="assignFirst(c.name)"
             @dragstart="onSourceDragStart($event, c.name)"
@@ -416,76 +509,94 @@ function run(): void {
             </span>
             <span v-if="o.hint" class="field-hint">{{ cleanHint(o.hint) }}</span>
           </div>
-          <div
-            class="target-box"
-            :class="{ 'drag-over': dragOver === o.key, 'has-value': o.kind === 'variable' ? !!values[o.key] : listFor(o.key).length > 0 }"
-            role="group"
-            :aria-labelledby="`lbl-${o.key}`"
-            :title="selected ? `Click to place '${selected}'` : 'Drag a variable here'"
-            @click="assignTo(o.key)"
-            @dragover.prevent="dragOver = o.key"
-            @dragleave="dragOver = null"
-            @drop="onTargetDrop($event, o.key)"
-          >
-            <template v-if="o.kind === 'variable'">
-              <span
-                v-if="values[o.key]"
-                class="token"
-                draggable="true"
-                :title="`${values[o.key]} - Drag to move or click × to remove`"
-                @dragstart="onTokenDragStart($event, o.key, values[o.key] as string)"
-              >
-                <MeasureIcon v-if="measureOf(values[o.key] as string)" :measure="measureOf(values[o.key] as string)!" :show-title="false" />
-                <span class="token-name">{{ values[o.key] }}</span>
-                <button type="button" class="token-remove-btn" :aria-label="`Remove ${values[o.key]}`" title="Remove" @click.stop="unassign(o.key)">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
+          <div class="target-row">
+            <div
+              class="target-box"
+              :class="{ 'drag-over': dragOver === o.key, 'has-value': o.kind === 'variable' ? !!values[o.key] : listFor(o.key).length > 0, 'is-active': activeTargetKey === o.key }"
+              role="group"
+              :aria-labelledby="`lbl-${o.key}`"
+              :title="selected ? `Click to place '${selected}'` : 'Drag a variable here'"
+              @click="onTargetClick(o.key)"
+              @focusin="activeTargetKey = o.key"
+              @dragover.prevent="dragOver = o.key"
+              @dragleave="dragOver = null"
+              @drop="onTargetDrop($event, o.key)"
+            >
+              <template v-if="o.kind === 'variable'">
+                <span
+                  v-if="values[o.key]"
+                  class="token"
+                  draggable="true"
+                  :title="`${values[o.key]} - Drag to move or click × to remove`"
+                  @dragstart="onTokenDragStart($event, o.key, values[o.key] as string)"
+                >
+                  <MeasureIcon v-if="measureOf(values[o.key] as string)" :measure="measureOf(values[o.key] as string)!" :show-title="false" />
+                  <span class="token-name">{{ values[o.key] }}</span>
+                  <button type="button" class="token-remove-btn" :aria-label="`Remove ${values[o.key]}`" title="Remove" @click.stop="unassign(o.key)">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                </span>
+                <div v-else class="target-empty-prompt">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 5v14M5 12h14"/>
                   </svg>
-                </button>
-              </span>
-              <div v-else class="target-empty-prompt">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 5v14M5 12h14"/>
-                </svg>
-                <span>Drop variable or click to assign</span>
-              </div>
-            </template>
-            <template v-else>
-              <span
-                v-for="name in listFor(o.key)"
-                :key="name"
-                class="token"
-                draggable="true"
-                :title="`${name} - Drag to move or click × to remove`"
-                @dragstart="onTokenDragStart($event, o.key, name)"
-              >
-                <MeasureIcon v-if="measureOf(name)" :measure="measureOf(name)!" :show-title="false" />
-                <span class="token-name">{{ name }}</span>
-                <button type="button" class="token-remove-btn" :aria-label="`Remove ${name}`" title="Remove" @click.stop="unassign(o.key, name)">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
+                  <span>Drop variable or click to assign</span>
+                </div>
+              </template>
+              <template v-else>
+                <span
+                  v-for="name in listFor(o.key)"
+                  :key="name"
+                  class="token"
+                  draggable="true"
+                  :title="`${name} - Drag to move or click × to remove`"
+                  @dragstart="onTokenDragStart($event, o.key, name)"
+                >
+                  <MeasureIcon v-if="measureOf(name)" :measure="measureOf(name)!" :show-title="false" />
+                  <span class="token-name">{{ name }}</span>
+                  <button type="button" class="token-remove-btn" :aria-label="`Remove ${name}`" title="Remove" @click.stop="unassign(o.key, name)">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                </span>
+                <div v-if="!listFor(o.key).length" class="target-empty-prompt">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 5v14M5 12h14"/>
                   </svg>
-                </button>
-              </span>
-              <div v-if="!listFor(o.key).length" class="target-empty-prompt">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 5v14M5 12h14"/>
-                </svg>
-                <span>Drop variables or click to assign</span>
-              </div>
-            </template>
+                  <span>Drop variables or click to assign</span>
+                </div>
+              </template>
+            </div>
+            <button
+              type="button"
+              class="shuttle-btn"
+              :disabled="!selected || !acceptable(o, selected)"
+              :title="selected ? `Place “${selected}” in ${o.label}` : 'Select a variable in the list first'"
+              :aria-label="`Place the selected variable in ${o.label}`"
+              @click="onTargetClick(o.key)"
+            >▸</button>
           </div>
 
           <!-- Group levels are read live from the data; nothing here is serialized. -->
-          <div v-if="o.key === 'group' && values[o.key]" class="groups-card">
-            <template v-if="groupLevels.length === 2">
+          <div v-if="levelSlot && o.key === levelSlot.key" class="groups-card">
+            <template v-if="!groupLevelWarning">
               <span class="groups-card-label">Levels:</span>
               <span class="group-levels">
-                <span class="group-level">{{ groupLevels[0].value }} (n = {{ groupLevels[0].n }})</span>
-                <span class="group-vs">vs.</span>
-                <span class="group-level">{{ groupLevels[1].value }} (n = {{ groupLevels[1].n }})</span>
+                <template v-if="groupLevels.length === 2">
+                  <span class="group-level">{{ groupLevels[0].label }} (n = {{ groupLevels[0].n }})</span>
+                  <span class="group-vs">vs.</span>
+                  <span class="group-level">{{ groupLevels[1].label }} (n = {{ groupLevels[1].n }})</span>
+                </template>
+                <template v-else>
+                  <span v-for="l in groupLevels" :key="l.value" class="group-level">
+                    {{ l.label }} (n = {{ l.n }})
+                  </span>
+                </template>
               </span>
             </template>
             <p v-else class="groups-warning" role="status">{{ groupLevelWarning }}</p>
@@ -561,8 +672,25 @@ function run(): void {
           </svg>
           <span>Ready to execute</span>
         </p>
+        <div class="dlg-foot-extras">
+          <span v-if="completeness" class="dlg-foot-completeness">
+            Complete rows: {{ completeness.complete }}/{{ completeness.rows }}
+          </span>
+          <label class="dlg-foot-field">
+            <span class="dlg-foot-field-label">Missing</span>
+            <select v-model="missingPolicy" class="dialog-select dlg-policy-select" aria-label="Missing value handling">
+              <option value="listwise">Listwise</option>
+              <option value="pairwise">Pairwise</option>
+            </select>
+          </label>
+          <label class="dlg-foot-field">
+            <input v-model="includeChart" type="checkbox" class="option-checkbox" />
+            <span class="dlg-foot-field-label">Companion plot</span>
+          </label>
+        </div>
       </div>
       <div class="dlg-foot-actions">
+        <button type="button" class="btn" @click="dlg?.close()">Cancel</button>
         <button
           type="button"
           class="btn btn-primary"
@@ -986,7 +1114,7 @@ function run(): void {
   border-color: var(--accent);
   border-style: solid;
   background: var(--accent-soft);
-  box-shadow: 0 0 0 3px rgba(35, 103, 236, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-light);
 }
 
 .target-empty-prompt {
@@ -1035,8 +1163,89 @@ function run(): void {
 }
 
 .token-remove-btn:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.target-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.target-row .target-box {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ▸ shuttle button (design.md §4.4) */
+.shuttle-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line-strong);
+  background: var(--panel-alt);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  padding: 0;
+}
+
+.shuttle-btn:hover:not(:disabled),
+.shuttle-btn:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.shuttle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.target-box.is-active {
+  border-color: var(--accent);
+}
+
+.var-row.is-incompatible {
+  opacity: 0.45;
+}
+
+.dlg-foot-extras {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.dlg-foot-completeness {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dlg-foot-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dlg-foot-field-label {
+  white-space: nowrap;
+}
+
+.dlg-policy-select {
+  height: 24px;
+  font-size: 11px;
+  padding: 0 4px;
 }
 
 .groups-card {
@@ -1214,7 +1423,7 @@ function run(): void {
 }
 
 .dlg-status.is-ready {
-  color: var(--ok, #10b981);
+  color: var(--ok);
 }
 
 .dlg-foot-actions {

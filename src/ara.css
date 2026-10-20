@@ -694,7 +694,9 @@ kbd { font-family: var(--font-sans); font-size: 10.5px; color: var(--faint); }
   gap: 6px;
   white-space: nowrap;
   flex-wrap: nowrap;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  z-index: 50;
 }
 .data-header {
   padding-left: 10px;
@@ -6802,14 +6804,11 @@ dialog:not([open]) {
 .dha-findings-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
   margin-bottom: 14px;
   width: 100%;
   box-sizing: border-box;
-}
-
-.dha-findings-row.has-expanded {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (max-width: 680px) {

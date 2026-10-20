@@ -2,7 +2,7 @@
 // sends run_analysis over the §4 seam. Menu dialogs and AI proposal cards
 // share this ONE path (arch §9: no second code path).
 import { state, isUserMissing } from './store.ts'
-import { startRun, findRun, markStale, failRun, newRunId } from './results.ts'
+import { startRun, findRun, markStale, failRun, newRunId, type RunChart } from './results.ts'
 import { schemaById } from './specs.ts'
 import { isRecord } from './guard.ts'
 
@@ -43,7 +43,7 @@ function errMessage(err: unknown): string {
 export interface RunOptions {
   missingPolicy?: string
   runId?: string
-  chart?: { type: string; x?: string; y?: string; group?: string; title?: string }
+  chart?: RunChart
 }
 
 /** Run one analysis; returns the runId. Never throws: failures land as error elements. */
@@ -52,16 +52,24 @@ export async function runAnalysis(analysisId: string, spec: Record<string, unkno
   const title = schema?.title ?? analysisId
   const missingPolicy = opts.missingPolicy ?? schema?.missingDefault ?? 'listwise'
   const runId = opts.runId ?? newRunId()
-  if (findRun(runId)) markStale(runId)
-  else startRun(runId, analysisId, title, spec, missingPolicy)
+  // Callers pass reactive form/proposal state; the IPC invoke structured-clones
+  // and rejects Proxies ("An object could not be cloned"). Plain-ify once at this
+  // shared ingest so every run path crosses IPC safely. opts.chart rides through
+  // the reactive chat messages and needs the same treatment. A failure to
+  // plain-ify lands as an error element below, never a throw.
+  let plainSpec = spec
+  let plainChart: RunChart | undefined = opts.chart ?? undefined
   try {
-    // Callers pass reactive form/proposal state; the IPC invoke structured-clones
-    // and rejects Proxies ("An object could not be cloned"). Plain-ify once at this
-    // shared ingest so every run path crosses IPC safely. opts.chart rides through
-    // the reactive chat messages and needs the same treatment. A failure to
-    // plain-ify lands as an error element below, never a throw.
-    spec = JSON.parse(JSON.stringify(spec)) as Record<string, unknown>
-    const chart = opts.chart ? (JSON.parse(JSON.stringify(opts.chart)) as NonNullable<RunOptions['chart']>) : undefined
+    plainSpec = JSON.parse(JSON.stringify(spec)) as Record<string, unknown>
+    plainChart = opts.chart
+      ? (JSON.parse(JSON.stringify(opts.chart)) as RunChart)
+      : undefined
+  } catch {
+    // Keep the originals; the invoke below reports the failure.
+  }
+  if (findRun(runId)) markStale(runId, plainChart)
+  else startRun(runId, analysisId, title, plainSpec, missingPolicy, plainChart)
+  try {
     const caps = (await window.ara.engine.invoke('capabilities')) as unknown
     const analyses = isRecord(caps) && Array.isArray(caps['analyses']) ? (caps['analyses'] as unknown[]) : []
     if (!analyses.length) {
@@ -74,9 +82,9 @@ export async function runAnalysis(analysisId: string, spec: Record<string, unkno
     }
     // A chart may read columns outside the analysis spec: send those too so the
     // engine's renderer can see them.
-    const data = buildData(spec)
-    if (chart) {
-      for (const name of [chart.x, chart.y, chart.group]) {
+    const data = buildData(plainSpec)
+    if (plainChart) {
+      for (const name of [plainChart.x, plainChart.y, plainChart.group]) {
         if (typeof name === 'string' && name && data[name] === undefined) {
           const meta = state.ds.columns.find((c) => c.name === name)
           const raw = state.ds.data[name] ?? []
@@ -84,11 +92,11 @@ export async function runAnalysis(analysisId: string, spec: Record<string, unkno
         }
       }
     }
-    const engineChart = chart
-      ? { ...chart, type: chart.type === 'histogram' ? 'hist' : chart.type }
+    const engineChart = plainChart
+      ? { ...plainChart, type: plainChart.type === 'histogram' ? 'hist' : plainChart.type }
       : undefined
     await window.ara.engine.invoke('run_analysis', {
-      runId, analysisId, spec, data, missingPolicy,
+      runId, analysisId, spec: plainSpec, data, missingPolicy,
       ...(engineChart ? { chart: engineChart } : {})
     })
   } catch (err) {

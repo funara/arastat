@@ -22,6 +22,9 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
-    target: 'chrome110'
+    target: 'chrome110',
+    // Desktop WebView loads assets from disk; single vendor chunks like
+    // plotly.js-dist-min (~4.8 MB) and exceljs (~940 kB) are lazy-loaded on demand.
+    chunkSizeWarningLimit: 5500
   }
 })

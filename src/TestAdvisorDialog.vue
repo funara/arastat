@@ -3,8 +3,11 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { state } from './store.ts'
 import {
   suitableTests, ADVISOR_TITLES, findSensibleDefaultTestVars,
-  generateDatasetEdaHypotheses, type EdaHypothesis, type SuitableTestsResult
+  generateDatasetEdaHypotheses, distinctGroupLevels, diagnoseColumns,
+  listwiseForecast, recommendedTestId,
+  type EdaHypothesis, type SuitableTestsResult, type DiagnoseReport, type ListwiseForecast
 } from './advisor.ts'
+import MeasureIcon from './MeasureIcon.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -23,9 +26,17 @@ const edaHypotheses = computed<EdaHypothesis[]>(() => {
   return generateDatasetEdaHypotheses(state.ds.columns)
 })
 
+/**
+ * The group column is only known after the pattern is matched, so the level
+ * count is read in a second pass and fed back as `groupLevels`: a 3-level
+ * column must map to One-Way ANOVA, not to a two-group t-test.
+ */
 const suitableResult = computed<SuitableTestsResult>(() => {
   const cols = state.ds.columns.filter((c) => selectedTestVars.value.includes(c.name))
-  return suitableTests(cols)
+  const first = suitableTests(cols)
+  if (!first.group) return first
+  const levels = distinctGroupLevels(first.group).length
+  return levels ? suitableTests(cols, { groupLevels: levels }) : first
 })
 
 const patternTitle = computed(() => {
@@ -33,6 +44,69 @@ const patternTitle = computed(() => {
   if (pat === 'unknown') return 'CUSTOM SELECTION'
   return (ADVISOR_TITLES[pat] ?? pat).toUpperCase()
 })
+
+// --- readiness + live assumption checks (the existing advisor seams) ---------
+
+const forecast = computed<ListwiseForecast | null>(() => {
+  const names = selectedTestVars.value
+  if (!names.length) return null
+  return listwiseForecast(names)
+})
+
+const diagReport = ref<DiagnoseReport | null>(null)
+const diagAdvice = ref('')
+const diagBusy = ref(false)
+
+/** One pill per live assumption: label + p value (null when not computable). */
+const assumptionPills = computed<Array<{ label: string; p: number | null }>>(() => {
+  const report = diagReport.value
+  if (!report) return []
+  const pills: Array<{ label: string; p: number | null }> = []
+  for (const [name, entry] of Object.entries(report.normality)) {
+    if (!entry) continue
+    pills.push({ label: `Shapiro-Wilk · ${name}`, p: entry.p })
+  }
+  if (report.homogeneity && report.homogeneity.p !== null) {
+    pills.push({ label: 'Levene', p: report.homogeneity.p })
+  }
+  return pills
+})
+
+/** The test the live assumption outcome points at (null = no change). */
+const recommendedId = computed(() =>
+  recommendedTestId(suitableResult.value.pattern, diagReport.value, suitableResult.value.values)
+)
+
+/** APA short p for a pill: "< .001" below the floor, else the 3-decimal form. */
+function fmtPShort(p: number | null): string {
+  if (p === null) return 'n/a'
+  if (p < 0.001) return '< .001'
+  return `p = ${p.toFixed(3).replace(/^0/, '')}`
+}
+
+/** Stale diagnose responses are dropped: only the newest chip set survives. */
+let diagToken = 0
+
+async function refreshDiagnosis(): Promise<void> {
+  const token = ++diagToken
+  const res = suitableResult.value
+  const names = res.values.length ? res.values : [...selectedTestVars.value]
+  if (!names.length || !res.needsDiagnose) {
+    diagReport.value = null
+    diagAdvice.value = ''
+    diagBusy.value = false
+    return
+  }
+  diagBusy.value = true
+  const { report, advice } = await diagnoseColumns(names, {
+    group: res.group ?? undefined,
+    pattern: res.pattern
+  })
+  if (token !== diagToken) return
+  diagReport.value = report
+  diagAdvice.value = advice
+  diagBusy.value = false
+}
 
 function toggleTestVar(colName: string): void {
   const idx = selectedTestVars.value.indexOf(colName)
@@ -95,9 +169,17 @@ watch(
       } else {
         selectedTestVars.value = findSensibleDefaultTestVars(state.ds.columns)
       }
+      // Re-opening with the same columns leaves the selection unchanged, so the
+      // deep watcher below would not fire: refresh the diagnosis explicitly.
+      void refreshDiagnosis()
     }
-  }
+  },
+  { immediate: true }
 )
+
+// The assumption check follows the variable selection: one diagnose call per
+// change, never one per render.
+watch(selectedTestVars, () => { void refreshDiagnosis() }, { deep: true })
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
@@ -184,9 +266,30 @@ onUnmounted(() => {
               type="button"
               @click="toggleTestVar(col.name)"
             >
+              <MeasureIcon :measure="col.measure" :show-title="false" />
               <span class="var-chip-name">{{ col.name }}</span>
               <span class="var-chip-measure">{{ col.measure }}</span>
             </button>
+          </div>
+
+          <!-- Readiness & assumption bar: live completeness + the diagnose seam. -->
+          <div v-if="forecast" class="readiness-bar">
+            <div class="readiness-stats">
+              <span class="readiness-chip" :class="forecast.complete === forecast.rows ? 'is-ok' : 'is-warn'">
+                Complete rows: {{ forecast.complete }}/{{ forecast.rows }}
+              </span>
+              <span
+                v-for="pill in assumptionPills"
+                :key="pill.label"
+                class="readiness-chip"
+                :class="pill.p === null ? 'is-muted' : pill.p < 0.05 ? 'is-warn' : 'is-ok'"
+              >
+                {{ pill.label }}: {{ fmtPShort(pill.p) }}
+              </span>
+              <span v-if="diagBusy" class="readiness-chip is-muted">Checking assumptions…</span>
+            </div>
+            <p v-if="diagAdvice" class="readiness-advice">{{ diagAdvice }}</p>
+            <p v-else-if="forecast.reason" class="readiness-advice">{{ forecast.reason }}</p>
           </div>
 
           <div class="tests-pattern-hero">
@@ -198,10 +301,16 @@ onUnmounted(() => {
           </div>
 
           <div class="suitable-tests-list">
-            <div v-for="test in suitableResult.tests" :key="test.id" class="test-card">
+            <div
+              v-for="test in suitableResult.tests"
+              :key="test.id"
+              class="test-card"
+              :class="{ 'is-recommended': test.id === recommendedId }"
+            >
               <div class="test-card-content">
                 <div class="test-card-head">
                   <h4 class="test-card-title">{{ test.title }}</h4>
+                  <span v-if="test.id === recommendedId" class="test-card-recommended">Recommended</span>
                   <span class="test-card-category">{{ test.id }}</span>
                 </div>
                 <p class="test-card-desc">{{ test.description || 'Standard procedure for this column structure.' }}</p>
@@ -242,19 +351,85 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   border-radius: 7px;
-  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  background: var(--accent-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.35);
-  color: #ffffff;
+  box-shadow: var(--shadow-sm);
+  color: var(--accent);
   flex-shrink: 0;
 }
 
 .test-advisor-icon svg {
   width: 14px;
   height: 14px;
-  color: #ffffff;
+  color: var(--accent);
+}
+
+/* Readiness & assumption bar */
+.readiness-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+}
+
+.readiness-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.readiness-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.readiness-chip.is-ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.readiness-chip.is-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.readiness-chip.is-muted {
+  color: var(--faint);
+}
+
+.readiness-advice {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-secondary);
+}
+
+.test-card.is-recommended {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.test-card-recommended {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  padding: 1px 6px;
+  border-radius: 100px;
 }
 
 .test-advisor-body {

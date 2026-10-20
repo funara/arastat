@@ -72,6 +72,10 @@ function openAuthorLink(): void {
   window.open("https://adhirahmadian.id", "_blank");
 }
 
+function openOfficeLink(): void {
+  window.open("https://office.adhirahmadian.id", "_blank");
+}
+
 const settingsOpen = ref(false);
 const settingsDlg = ref<HTMLDialogElement | null>(null);
 type AiProvider = "google" | "custom";
@@ -1002,6 +1006,12 @@ function onAboutClosed(): void {
           @click="openAuthorLink"
         >
           adhirahmadian.id</button
+        > · <button
+          class="about-link"
+          type="button"
+          @click="openOfficeLink"
+        >
+          office.adhirahmadian.id</button
         >) <br />
         Version 0.1.0 · GNU GPL v3.0
       </p>
