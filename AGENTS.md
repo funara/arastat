@@ -1,6 +1,6 @@
 # ARAStat — AI Coding Agent Playbook & Guardrails (`agent.md`)
 
-This document is the authoritative operational guide for any AI coding assistant working in the **ARAStat** repository. Read this file alongside [`design.md`](file:///C:/Users/adhir/Documents/Git/ARAEcosystem/arastat/design.md), [`architecture.md`](file:///C:/Users/adhir/Documents/Git/ARAEcosystem/arastat/architecture.md), and [`plan.md`](file:///C:/Users/adhir/Documents/Git/ARAEcosystem/arastat/plan.md) before proposing or writing changes.
+This document is the authoritative operational guide for any AI coding assistant working in the **ARAStat** repository. Read this file alongside [`design.md`], [`architecture.md`] and [`plan.md`]before proposing or writing changes.
 
 ---
 
