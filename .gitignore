@@ -59,3 +59,7 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# AI
+AGENTS.md
+DESIGN.md
