@@ -2,6 +2,7 @@
 import { reactive, computed, toRaw, ref } from 'vue'
 import { defaultMeta, type ColumnMeta, type ColumnarDataset, type ColumnValues } from './io/types.ts'
 import { computeFill, interpolateValues, type FillMode } from './missing.ts'
+import { evalExprTokens, tokenizeExpr } from './expr.ts'
 import { computeLogValues, computeStandardizeValues, computeBinValues, suggestTransformName, computeConvertValues, computeMergeValues, computeWinsorizeValues } from './transforms.ts'
 
 export const NA_TOKEN = 'NA'
@@ -15,7 +16,7 @@ export type UiEvent =
   | { t: 'rowDel'; row: number; values: Record<string, Cell> }
   | { t: 'colAdd'; index: number; meta: ColumnMeta; values: ColumnValues }
   | { t: 'colDel'; index: number; meta: ColumnMeta; values: ColumnValues }
-  | { t: 'dataset'; prev: ColumnarDataset; next: ColumnarDataset }
+  | { t: 'dataset'; prev: ColumnarDataset; next: ColumnarDataset; prevFormulas?: string[]; nextFormulas?: string[] }
 
 export const state = reactive({
   ds: { columns: [], data: {} } as ColumnarDataset,
@@ -23,9 +24,8 @@ export const state = reactive({
   sample: false,
   filename: '' as string,
   rev: 0,
-  // Formulas behind AI-gated computed columns. ponytail: the list is append-only, the
-  // inverse-event stack covers the columns themselves; tie formulas into the stack if
-  // undo must drop them too.
+  sessionVersion: 0,
+  // AI proposals include formula changes in their dataset undo event.
   computedFormulas: [] as string[]
 })
 
@@ -55,7 +55,7 @@ export function invert(ev: UiEvent): UiEvent {
     case 'rowDel': return { t: 'rowAdd', row: ev.row, values: ev.values }
     case 'colAdd': return { t: 'colDel', index: ev.index, meta: ev.meta, values: ev.values }
     case 'colDel': return { t: 'colAdd', index: ev.index, meta: ev.meta, values: ev.values }
-    case 'dataset': return { t: 'dataset', prev: ev.next, next: ev.prev }
+    case 'dataset': return { t: 'dataset', prev: ev.next, next: ev.prev, prevFormulas: ev.nextFormulas, nextFormulas: ev.prevFormulas }
   }
 }
 
@@ -94,6 +94,7 @@ export function apply(ev: UiEvent): void {
     }
     case 'dataset':
       state.ds = clone(ev.next)
+      if (ev.nextFormulas) state.computedFormulas = clone(ev.nextFormulas)
       break
   }
   state.rev++
@@ -368,6 +369,39 @@ export function clearHistory(): void {
 export function setDataset(ds: ColumnarDataset): void {
   commit({ t: 'dataset', prev: clone(state.ds), next: clone(ds) })
   state.sample = ds.sample ?? false
+}
+
+/** Validate the entire AI proposal before adding calculated columns in one undo step. */
+export function addComputedFormulas(formulas: string[]): void {
+  if (!formulas.length) return
+  const next = clone(state.ds)
+  const count = rowCount.value
+  const names = new Set(next.columns.map((c) => c.name.toLowerCase()))
+  for (const formula of formulas) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(formula)
+    if (!match) throw new Error(`Invalid formula: ${formula}`)
+    const [, name, expression] = match
+    if (names.has(name.toLowerCase())) throw new Error(`Column ${name} already exists. Rename the proposed column before running.`)
+    const tokens = tokenizeExpr(expression)
+    const refs = [...new Set(tokens.filter((t) => /^[A-Za-z_]/.test(t)))]
+    const columns = refs.map((ref) => next.columns.find((c) => c.name === ref))
+    if (!tokens.length || columns.some((c) => !c || c.type !== 'numeric')) throw new Error(`Formula ${name} must use existing numeric columns and arithmetic operators.`)
+    const probe = Object.fromEntries(refs.map((ref) => [ref, 1]))
+    if (evalExprTokens(tokens, probe) === null) throw new Error(`Invalid expression for ${name}.`)
+    const values = Array.from({ length: count }, (_, row) => {
+      const vars: Record<string, Cell> = {}
+      for (const col of columns as ColumnMeta[]) {
+        const value = (next.data[col.name] as Cell[])[row] ?? null
+        vars[col.name] = isUserMissing(col, value) ? null : value
+      }
+      const value = evalExprTokens(tokens, vars)
+      return value !== null && Number.isFinite(value) ? value : null
+    })
+    names.add(name.toLowerCase())
+    next.columns.push(defaultMeta(name, 'numeric'))
+    next.data[name] = values
+  }
+  commit({ t: 'dataset', prev: clone(state.ds), next, prevFormulas: [...state.computedFormulas], nextFormulas: [...state.computedFormulas, ...formulas] })
 }
 
 export const rowCount = computed(() => {

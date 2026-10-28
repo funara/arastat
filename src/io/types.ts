@@ -81,6 +81,8 @@ export function numericCell(raw: string): number | null {
 export interface RowImportOptions {
   /** Exact-match tokens that mean missing. Default: '', 'NA', '.'. */
   missingTokens?: string[]
+  /** Per-column missing tokens, for formats with explicit metadata. */
+  missingTokensByColumn?: Record<string, string[]>
   /** Per-column type overrides ('date' only exists via override). */
   types?: Record<string, ColumnType>
 }
@@ -104,12 +106,16 @@ export function datasetFromRows(header: string[], rows: string[][], opts: RowImp
   }
   for (let c = 0; c < header.length; c++) {
     const raws = rows.map((row) => row[c] ?? '')
-    const cells = raws.map((raw) => (missingTokens.includes(raw) ? null : raw))
+    const columnMissing = opts.missingTokensByColumn?.[header[c]] ?? missingTokens
+    const cells = raws.map((raw) => (columnMissing.includes(raw) ? null : raw))
     const override = opts.types?.[header[c]]
     const allNumeric = cells.every((cell) => cell === null || numericCell(cell) !== null)
     const type: ColumnType = override ?? (cells.some((cell) => cell !== null) && allNumeric ? 'numeric' : 'string')
     const meta = defaultMeta(header[c], type)
     if (type === 'numeric') {
+      if (cells.some((cell) => cell !== null && numericCell(cell) === null)) {
+        throw new IoError('io-numeric', `Column ${meta.name} contains a value that is not numeric. Correct the value or import the column as text.`)
+      }
       data[meta.name] = cells.map((cell) => (cell === null ? null : Number(cell.trim())))
     } else {
       data[meta.name] = cells as Array<string | null>

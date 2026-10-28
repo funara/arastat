@@ -55,5 +55,6 @@ export function evalExprTokens(tokens: string[], vars: ExprVars): number | null 
 
 /** Tokenize a Compute expression; empty array means the expression had characters we do not support. */
 export function tokenizeExpr(expr: string): string[] {
-  return expr.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[+\-*/()]/g) ?? []
+  const tokens = expr.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[+\-*/()]/g) ?? []
+  return tokens.join('') === expr.replace(/\s/g, '') ? tokens : []
 }

@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import ExcelJS from 'exceljs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -50,6 +51,13 @@ test('csv round-trips quoting torture and missing cells', () => {
   assert.ok(text.includes('"line\nbreak"'))
   const back = importCsvBytes(textBytes(text))
   assert.deepEqual(back, ds)
+})
+
+test('single-column csv preserves empty cases without adding a final case', () => {
+  const ds = { columns: [defaultMeta('value', 'string')], data: { value: [null, 'A', null, 'B', null] } }
+  assert.deepEqual(importCsvBytes(textBytes(serializeCsv(ds))).data, ds.data)
+  assert.deepEqual(importCsvBytes(textBytes('value\n""')).data.value, [null])
+  assert.deepEqual(importCsvBytes(textBytes('value\nA\n')).data.value, ['A'])
 })
 
 test('csv fixture sample.csv parses per RFC 4180 with missing tokens', () => {
@@ -164,6 +172,50 @@ test('xlsx round-trips data and full column meta via the meta sheet', async () =
   const back = await importXlsxBytes(new Uint8Array(buf))
   // Exact data, exact meta (the Column meta sheet round-trips every field).
   assert.deepEqual(back, ds)
+})
+
+test('xlsx metadata preserves text IDs and literal missing tokens', async () => {
+  const ds = { columns: [defaultMeta('id', 'string')], data: { id: ['001', '002', 'NA', '.', '', null, 'end', null] } }
+  assert.deepEqual(await importXlsxBytes(await exportXlsx(ds)), ds)
+})
+
+test('xlsx without metadata preserves Excel text IDs that look numeric', async () => {
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('Data')
+  ws.addRow(['id', 'value'])
+  ws.addRow(['001', 1])
+  ws.addRow(['NA', 2])
+  ws.addRow(['.', 3])
+  const imported = await importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer()))
+  assert.deepEqual(imported.data.id, ['001', 'NA', '.'])
+  assert.deepEqual(imported.data.value, [1, 2, 3])
+})
+
+test('xlsx reads dates and mixed cells and rejects malformed metadata', async () => {
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('Data')
+  ws.addRow(['date', 'mixed'])
+  ws.addRow([new Date('2020-01-02T00:00:00.000Z'), '001'])
+  ws.addRow([new Date('2020-01-03T00:00:00.000Z'), 2])
+  const imported = await importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer()))
+  assert.deepEqual(imported.data.date, ['2020-01-02T00:00:00.000Z', '2020-01-03T00:00:00.000Z'])
+  assert.deepEqual(imported.data.mixed, ['001', '2'])
+  assert.equal(imported.columns[0].type, 'date')
+  const meta = wb.addWorksheet('Column meta')
+  meta.addRow(['name', 'label', 'type', 'measure', 'valueLabels', 'missing', 'decimals', 'width', 'align'])
+  meta.addRow(['mixed', '', 'string', 'nominal', '{}', '{"values":null,"ranges":[]}', 0, 8, 'left'])
+  await assert.rejects(importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer())), { code: 'xlsx-meta' })
+  meta.getCell('F2').value = '{"values":[],"ranges":[]}'
+  for (const invalid of [-1, 1.5, 17, 1000]) {
+    meta.getCell('G2').value = invalid
+    await assert.rejects(importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer())), { code: 'xlsx-meta' })
+  }
+  meta.getCell('G2').value = 0
+  meta.getCell('H2').value = 100000
+  await assert.rejects(importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer())), { code: 'xlsx-meta' })
+  meta.getCell('H2').value = 8
+  meta.getCell('F2').value = '{"values":[],"ranges":[[5,1]]}'
+  await assert.rejects(importXlsxBytes(new Uint8Array(await wb.xlsx.writeBuffer())), { code: 'xlsx-meta' })
 })
 
 test('xlsx without a meta sheet infers types and missing tokens', async () => {

@@ -15,6 +15,7 @@ import {
   readinessSummary, getAiRecommendation, cachedAiRec, resetAiAdvisorCache
 } from './advisor.ts'
 import { computeHealth, type QualityIssue, type HealthSummary } from './quality.ts'
+import { watchDatasetSession } from './session.ts'
 
 const props = defineProps<{
   modelValue: boolean
@@ -143,6 +144,8 @@ function undoEntry(e: LogEntry): void {
     }
   } else {
     undo()
+    analyzeDataset()
+    healthTick.value++
   }
   e.undone = true
 }
@@ -704,38 +707,24 @@ function resetModalState(): void {
   aiRecLoading.value = false
 }
 
-// Auto-reset modal state when dataset is closed, empty, or replaced
-watch(
-  () => [state.filename, state.ds] as const,
-  ([newFile, newDs], [oldFile, oldDs]) => {
-    if (newFile !== oldFile || newDs !== oldDs) {
-      resetModalState()
-      if (props.modelValue) {
-        analyzeDataset()
-        void nextTick().then(() => {
-          healthTick.value++
-          baseline.value = {
-            complete: readiness.value.completeRows,
-            rows: readiness.value.rows
-          }
-          if (scanStatus.value !== 'error') scanStatus.value = 'ready'
-          if (state.ds.columns.length) {
-            void loadAiRec()
-          }
-        })
+// Undoable fixes can replace state.ds; only a new dataset session resets the workflow.
+watchDatasetSession(() => {
+  resetModalState()
+  if (props.modelValue) {
+    analyzeDataset()
+    void nextTick().then(() => {
+      healthTick.value++
+      baseline.value = {
+        complete: readiness.value.completeRows,
+        rows: readiness.value.rows
       }
-    }
+      if (scanStatus.value !== 'error') scanStatus.value = 'ready'
+      if (state.ds.columns.length) {
+        void loadAiRec()
+      }
+    })
   }
-)
-
-watch(
-  () => state.ds.columns.length,
-  (newLen) => {
-    if (newLen === 0) {
-      resetModalState()
-    }
-  }
-)
+})
 const activeFocusVar = ref<string | null>(props.focusVar ?? null)
 
 function applyAiAction(target: 'missing' | 'readiness' | 'tests', targetCol?: string): void {

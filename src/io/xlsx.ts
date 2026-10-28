@@ -36,17 +36,36 @@ function metaSheet(wb: Workbook): ColumnMeta[] | null {
   if (!ws) return null
   const columns: ColumnMeta[] = []
   try {
+    const names = new Set<string>()
     for (let i = 2; i <= ws.rowCount; i++) {
       const cells = Array.from({ length: META_FIELDS.length }, (_, c) => cellText(ws.getRow(i).getCell(c + 1).value))
       if (cells.every((c) => c === '')) continue
       const [name, label, type, measure, valueLabels, missing, decimals, width, align] = cells
+      const labels: unknown = JSON.parse(valueLabels || '{}')
+      const rules: unknown = JSON.parse(missing || '{"values":[],"ranges":[]}')
+      if (
+        !name || names.has(name) ||
+        !['numeric', 'string', 'date'].includes(type) ||
+        !['nominal', 'ordinal', 'scale', 'ratio'].includes(measure) ||
+        !['left', 'right', 'center'].includes(align) ||
+        !Number.isInteger(Number(decimals)) || Number(decimals) < 0 || Number(decimals) > 16 ||
+        !Number.isInteger(Number(width)) || Number(width) < 0 || Number(width) > 32767 ||
+        typeof labels !== 'object' || labels === null || Array.isArray(labels) ||
+        Object.values(labels).some((v) => typeof v !== 'string') ||
+        typeof rules !== 'object' || rules === null ||
+        !('values' in rules) || !Array.isArray(rules.values) ||
+        rules.values.some((v) => typeof v !== 'string' && (typeof v !== 'number' || !Number.isFinite(v))) ||
+        !('ranges' in rules) || !Array.isArray(rules.ranges) ||
+        rules.ranges.some((r) => !Array.isArray(r) || r.length !== 2 || r.some((v) => typeof v !== 'number' || !Number.isFinite(v)) || r[0] > r[1])
+      ) throw new Error('invalid column metadata')
+      names.add(name)
       columns.push({
         ...defaultMeta(name, type as ColumnType),
         label,
         measure: measure as Measure,
         align: align as Align,
-        valueLabels: JSON.parse(valueLabels || '{}') as Record<string, string>,
-        missing: JSON.parse(missing || '{"values":[],"ranges":[]}') as MissingRules,
+        valueLabels: labels as Record<string, string>,
+        missing: rules as MissingRules,
         decimals: Number(decimals),
         width: Number(width)
       })
@@ -83,13 +102,15 @@ export async function importXlsxBytes(bytes: Uint8Array, opts: XlsxImportOptions
   if (!ws) {
     throw new IoError('xlsx-sheet', 'That sheet does not exist in this workbook. Pick another sheet name, or import as .csv.', opts.sheetName)
   }
+  const metaWs = wb.getWorksheet(META_SHEET)
+  const savedCount = metaWs?.getCell('K1').value === 'arastat-row-count' ? metaWs.getCell('K2').value : null
+  if (savedCount !== null && (typeof savedCount !== 'number' || !Number.isInteger(savedCount) || savedCount < 0 || savedCount > 1048575)) throw new IoError('xlsx-meta', 'The workbook row count is invalid. Repair the Column meta sheet and import again.')
   const rows: string[][] = []
-  for (let i = 1; i <= ws.rowCount; i++) {
+  for (let i = 1; i <= Math.max(ws.rowCount, (savedCount ?? 0) + 1); i++) {
     const row = ws.getRow(i)
     rows.push(Array.from({ length: ws.columnCount }, (_, c) => cellText(row.getCell(c + 1).value)))
   }
-  while (rows.length > 0 && rows[rows.length - 1].every((c) => c === '')) rows.pop()
-  if (rows.length === 0) {
+  if (rows.length === 0 || rows[0].every((c) => c === '')) {
     throw new IoError('io-empty', 'The sheet is empty. Pick a sheet with data in it, or import as .csv.')
   }
   const body = rows.slice(1)
@@ -99,9 +120,31 @@ export async function importXlsxBytes(bytes: Uint8Array, opts: XlsxImportOptions
       throw new IoError('xlsx-shape', 'A row has more values than the header has columns. Fix the row, then import again.', JSON.stringify(r))
     }
   }
-  const ds = datasetFromRows(rows[0], body, { missingTokens: opts.missingTokens, types: opts.types })
   const meta = metaSheet(wb)
+  const types: Record<string, ColumnType> = {}
+  const missingTokensByColumn: Record<string, string[]> = {}
+  for (const col of meta ?? []) {
+    types[col.name] = col.type
+    missingTokensByColumn[col.name] = opts.missingTokens ?? ['']
+  }
+  // Excel text cells are explicit text even when their contents look numeric.
+  rows[0].forEach((name, c) => {
+    if (types[name]) return
+    const values = Array.from({ length: ws.rowCount - 1 }, (_, i) => ws.getRow(i + 2).getCell(c + 1).value).filter((v) => v !== null && v !== undefined && v !== '')
+    if (values.length && values.every((v) => v instanceof Date)) types[name] = 'date'
+    else if (values.some((v) => typeof v === 'string')) types[name] = 'string'
+    if (types[name] === 'string' || types[name] === 'date') missingTokensByColumn[name] = opts.missingTokens ?? ['']
+  })
+  const ds = datasetFromRows(rows[0], body, { missingTokens: opts.missingTokens, missingTokensByColumn, types: { ...types, ...opts.types } })
   if (meta) applyMeta(ds, meta)
+  if (!opts.missingTokens) {
+    ds.columns.forEach((col, c) => {
+      if (col.type !== 'string') return
+      for (let row = 0; row < body.length; row++) {
+        if (ws.getRow(row + 2).getCell(c + 1).value === '') (ds.data[col.name] as Array<string | null>)[row] = ''
+      }
+    })
+  }
   return ds
 }
 
@@ -119,6 +162,8 @@ export async function exportXlsx(ds: ColumnarDataset): Promise<Uint8Array> {
   }
   const meta = wb.addWorksheet(META_SHEET)
   meta.addRow(META_FIELDS)
+  meta.getCell('K1').value = 'arastat-row-count'
+  meta.getCell('K2').value = rows
   for (const c of ds.columns) {
     meta.addRow([
       c.name,

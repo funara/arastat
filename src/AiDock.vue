@@ -4,13 +4,13 @@
 // two-way results explanation, and collapsible rail sidebar.
 // Single unified model with backend fallback.
 import { ref, computed, nextTick, watch } from 'vue'
-import { state, addColumn } from './store.ts'
+import { state, addComputedFormulas } from './store.ts'
 import { schemaById, specSummary } from './specs.ts'
 import { runAnalysis } from './runAnalysis.ts'
 import { isRecord } from './guard.ts'
 import { normalizeAiResponse } from './aiResponse.ts'
+import { createExplanationGate, createSessionGuard } from './aiPrivacy.ts'
 import { type Run } from './results.ts'
-import { defaultMeta } from './io/types.ts'
 import { splitLeadingBullet, splitTrailingProse } from './aiText.ts'
 
 const open = ref(true)
@@ -64,6 +64,9 @@ const messages = ref<ChatEntry[]>([
 const draft = ref('')
 const busy = ref(false)
 const pending = ref<PendingMutation | null>(null)
+const sessionGuard = createSessionGuard()
+const explanationGate = createExplanationGate(sendExplanation)
+const pendingExplanation = explanationGate.pending
 const scrollEl = ref<HTMLElement | null>(null)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 let nextId = 1
@@ -93,6 +96,9 @@ function handleComposerKeydown(ev: KeyboardEvent): void {
 }
 
 function clear(): void {
+  sessionGuard.invalidate()
+  busy.value = false
+  emit('status-change', 'ready')
   messages.value = [
     {
       id: 0,
@@ -101,6 +107,7 @@ function clear(): void {
     }
   ]
   pending.value = null
+  explanationGate.cancel()
   nextId = 1
   draft.value = ''
   if (textareaRef.value) {
@@ -420,6 +427,8 @@ function getDatasetContext(): string {
 async function sendPrompt(customText?: string): Promise<void> {
   const text = (customText ?? draft.value).trim()
   if (!text || busy.value) return
+  const session = sessionGuard.snapshot()
+  explanationGate.cancel()
   if (!customText) {
     draft.value = ''
     if (textareaRef.value) {
@@ -510,6 +519,7 @@ When asked to explain results or APA tables, act as a Senior Professor of Statis
       { role: 'user', content: text }
     ])
 
+    if (!sessionGuard.isCurrent(session)) return
     // ONE shared normalizer: narrative/proposal/chart/fallback in one pass.
     const normalized = normalizeAiResponse(replyRaw)
     const thinking = normalized.thinking
@@ -536,11 +546,14 @@ When asked to explain results or APA tables, act as a Senior Professor of Statis
     })
     emit('status-change', 'ready')
   } catch (err) {
+    if (!sessionGuard.isCurrent(session)) return
     emit('status-change', 'error')
     handleAiError(err)
   } finally {
-    busy.value = false
-    scrollDown()
+    if (sessionGuard.isCurrent(session)) {
+      busy.value = false
+      scrollDown()
+    }
   }
 }
 
@@ -561,16 +574,13 @@ async function runProposal(entry: ChatEntry): Promise<void> {
     columns: formulas.length,
     messageId: entry.id,
     apply: () => {
-      const taken = new Set(state.ds.columns.map((c) => c.name))
-      formulas.forEach((formula, i) => {
-        let name = (formula.split('=')[0] ?? '').trim() || `computed${i + 1}`
-        while (taken.has(name)) name = `${name}_${i + 2}`
-        taken.add(name)
-        addColumn(defaultMeta(name, 'numeric'))
-      })
-      state.computedFormulas.push(...formulas)
-      emit('toast', `${formulas.length} computed columns added to the dataset`)
-      void runAnalysis(p.analysis, spec)
+      try {
+        addComputedFormulas(formulas)
+        emit('toast', `${formulas.length} computed columns added to the dataset`)
+        void runAnalysis(p.analysis, spec, entry.chart ? { chart: entry.chart } : {})
+      } catch (err) {
+        emit('toast', err instanceof Error ? err.message : 'The proposed formulas could not be applied.')
+      }
     }
   }
   scrollDown()
@@ -587,15 +597,16 @@ function cancelMutation(): void {
 
 
 /** External trigger: Explain a specific analysis run from ResultsPane */
-async function explainRun(run: Run): Promise<void> {
+function explainRun(run: Run): void {
   open.value = true
-  const tables = run.elements
-    .filter((el) => el.kind === 'table')
-    .map((t) => `${t.caption}: ${t.columns.join(' | ')}\nRows: ${t.rows.map((r) => r.join(' | ')).join('\n')}`)
-    .join('\n\n')
+  if (busy.value) return
+  explanationGate.show(run)
+  scrollDown()
+}
 
-  const promptText = `Please provide a concise, publication-grade statistical narrative interpretation for this ${run.title} analysis output:\n${tables}\nSpec: ${specSummary(run.spec)}`
-
+async function sendExplanation({ run, prompt: promptText }: { run: Run; prompt: string }): Promise<void> {
+  if (busy.value) return
+  const session = sessionGuard.snapshot()
   messages.value.push({ id: nextId++, who: 'user', text: `Explain results for "${run.title}"` })
   busy.value = true
   emit('status-change', 'busy')
@@ -629,6 +640,7 @@ async function explainRun(run: Run): Promise<void> {
       { role: 'user', content: promptText }
     ])
 
+    if (!sessionGuard.isCurrent(session)) return
     const interpreted = normalizeAiResponse(replyRaw)
     const normalizedText = interpreted.narrative
       .replace(/^(?:(?:\*\*)?(?:APA(?:\s*7th)?\s*)?(?:Narrative\s*)?Interpretation(?:\*\*)?[:\s\-–—]*)/i, '')
@@ -643,11 +655,14 @@ async function explainRun(run: Run): Promise<void> {
     })
     emit('status-change', 'ready')
   } catch (err) {
+    if (!sessionGuard.isCurrent(session)) return
     emit('status-change', 'error')
     handleAiError(err)
   } finally {
-    busy.value = false
-    scrollDown()
+    if (sessionGuard.isCurrent(session)) {
+      busy.value = false
+      scrollDown()
+    }
   }
 }
 
@@ -957,6 +972,17 @@ defineExpose({
           </div>
         </template>
 
+        <div v-if="pendingExplanation" class="msg bot">
+          <div class="bubble confirm-gate" role="region" aria-label="Review AI explanation data">
+            <strong>Review before sending</strong>
+            <p>This text will be sent to your configured AI provider. Other result tables may still contain sensitive values; review them before continuing.</p>
+            <pre style="white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto">{{ pendingExplanation.prompt }}</pre>
+            <div class="process-actions">
+              <button class="btn btn-primary btn-sm" type="button" :disabled="busy" @click="explanationGate.approve()">Send for explanation</button>
+              <button class="btn btn-sm" type="button" @click="explanationGate.cancel()">Cancel</button>
+            </div>
+          </div>
+        </div>
         <div v-if="busy" class="msg bot ai-thinking-row">
           <div class="msg-bot-meta">
             <div class="msg-bot-badge">

@@ -526,8 +526,7 @@ onUnmounted(() => {
         <h4 class="results-empty-title">No Statistical Results Yet</h4>
         <p class="results-empty-desc">
           Choose a procedure from the <strong>Analyze</strong> menu or ask
-          <strong>ARA Assistant</strong> <br />
-          to generate tables and interpretation narratives.
+          <strong>ARA Assistant</strong> to generate tables and interpretation narratives.
         </p>
         <div v-if="state.ds.columns.length" class="quick-start-row">
           <button

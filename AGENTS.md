@@ -9,7 +9,7 @@ This document is the authoritative operational guide for any AI coding assistant
 1. **Privacy-First & 100% Local Computation**:
    - All statistical computations execute locally inside the Python `ara_engine` sidecar (`engine/ara_engine/`) or pure TypeScript dataset transforms (`src/`).
    - Never add telemetry, analytics, cloud storage, or third-party tracking scripts.
-   - Never send raw dataset rows to an AI endpoint; AI prompts in `src/ai.ts` must only include schema metadata and aggregated statistical output.
+   - Never send raw dataset rows to an AI endpoint. AI context in `src/AiDock.vue` and `src/advisor.ts` uses schema metadata and aggregated output; preview result explanations before sending and treat category labels as potentially identifying.
 2. **Provider-Agnostic AI**:
    - Keep first-class parity between Google Gemini, OpenAI-compatible APIs, and local keyless loopback servers (`http://localhost:11434/v1` for Ollama, `http://localhost:1234/v1` for LM Studio).
 3. **SPSS + JASP Visual & Functional Standard**:
@@ -31,9 +31,9 @@ Run these commands from the repository root:
 | :--- | :--- | :--- |
 | **TypeScript & Vue Check** | `npm run typecheck` | Runs `vue-tsc --noEmit`. Must pass with `0` errors. |
 | **Frontend + Engine Tests** | `npm test` | Runs Node test runner (`tests/*.test.js`), including `tests/ref.test.js` which spawns the real Python `ara_engine` and checks golden fixtures at `1e-9` relative tolerance. |
-| **Rust Host Unit Tests** | `npm run test:rust` | Runs `cargo test --manifest-path src-tauri/Cargo.toml` (tests AES-GCM crypto, AI proxy validation, SAV parser, engine framing, recent files, updater). |
-| **Frontend Production Build** | `npm run build` | Builds Vite frontend from `src/` into `dist/`. |
-| **Tauri Dev Mode** | `npm run dev` | Starts Vite dev server on `http://localhost:5173` and launches the Tauri v2 desktop window. |
+| **Rust Host Tests** | `npm run test:rust` | Runs `cargo test --manifest-path src-tauri/Cargo.toml`, including live-engine seam tests. |
+| **Frontend Production Build** | `npm run build:vite` | Builds the Vite frontend from `src/` into `dist/`. `npm run build` builds the Tauri application. |
+| **Tauri Dev Mode** | `npm run dev` | Starts the Vite dev server and launches the Tauri desktop window. |
 | **Regenerate Golden Fixtures** | `engine\.venv\Scripts\python.exe engine/ara_engine/fixtures.py` | Regenerates `expected.json` files in `tests/fixtures/` when adding a new statistical test. |
 
 ---
@@ -67,6 +67,6 @@ Whenever you add a new statistical test (e.g., `reliability_cronbach` or `factor
 - **Strict Content Security Policy (`src/index.html` & `src-tauri/tauri.conf.json`)**:
   - No `unsafe-eval`. All user-entered formulas in Compute Variable must be parsed and evaluated via `src/expr.ts` (`tokenizeExpr` + `evalExprTokens`).
   - All HTML strings built for exports or clipboard (`src/exports.ts`) must escape user data (`&`, `<`, `>`, `"`, `'`) to prevent XSS injection.
-- **IPC Boundary (`src/tauri-shim.ts` & `src-tauri/src/lib.rs`)**:
-  - Frontend components must interact with native capabilities exclusively through `window.ara` and `window.araUpdate` (defined in `src/shared/ara-api.ts` and `src/shared/update-api.ts`).
-  - Keep `src/tauri-shim.ts` in 1:1 parity with `#[tauri::command]` handlers in `src-tauri/src/lib.rs`.
+- **IPC Boundary (`src/tauri-bridge.ts` & `src-tauri/src/lib.rs`)**:
+  - Frontend components must interact with native capabilities exclusively through `window.ara` and `window.araUpdate` (defined in `src/shared/bridge-api.ts` and `src/shared/update-api.ts`).
+  - Keep the bridge in parity with the registered `#[tauri::command]` handlers.

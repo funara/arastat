@@ -43,9 +43,9 @@ export async function importFile(path: string, bytes: ArrayBuffer): Promise<void
 }
 
 /** Open dialog: project archives (.ara.zip) restore dataset + results, data files import. */
-export async function openWithDialog(restore: (tree: unknown) => void): Promise<{ kind: 'dataset' | 'project' | 'cancel' }> {
+export async function openWithDialog(restore: (tree: unknown) => void, confirmReplace: () => Promise<boolean>): Promise<{ kind: 'dataset' | 'project' | 'cancel' }> {
   const path = await window.ara.file.open()
-  if (!path) return { kind: 'cancel' }
+  if (!path || !(await confirmReplace())) return { kind: 'cancel' }
   const bytes = await window.ara.file.readBytes(path)
   if (!bytes) throw new IoError('io-read', 'The file could not be read. Try again.')
   if (path.toLowerCase().endsWith('.ara.zip')) {

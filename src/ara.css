@@ -1224,14 +1224,17 @@ table.apa tbody tr:last-child td, table.apa tbody tr:last-child th {
 /* Connected Result Actions */
 .result-action-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-top: 12px;
   padding-top: 8px;
   border-top: 1px dashed var(--line);
 }
 .ai-explain-btn {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   background: var(--accent-soft);
@@ -4895,14 +4898,14 @@ dialog:not([open]) {
 .cat-progress-fill {
   height: 100%;
   border-radius: 3px;
-  background: #6366f1;
+  background: var(--badge-nominal-text);
 }
 
 .mode-badge {
   font-size: 9px;
   font-weight: 600;
-  background: rgba(99, 102, 241, 0.12);
-  color: #6366f1;
+  background: var(--badge-nominal-bg);
+  color: var(--badge-nominal-text);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -4915,9 +4918,9 @@ dialog:not([open]) {
   gap: 14px;
   padding: 10px 14px;
   margin-bottom: 16px;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  border-left: 3px solid #f59e0b;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-left: 3px solid var(--warn);
   border-radius: 6px;
 }
 
@@ -4936,21 +4939,21 @@ dialog:not([open]) {
 }
 
 .vqc-icon {
-  color: #f59e0b;
+  color: var(--warn);
   flex-shrink: 0;
 }
 
 .vqc-badge {
   font-size: 11px;
   font-weight: 700;
-  color: #f59e0b;
+  color: var(--warn);
   letter-spacing: 0.02em;
 }
 
 .vqc-msg {
   font-size: 11.5px;
   line-height: 1.4;
-  color: var(--ink-secondary, #cbd5e1);
+  color: var(--ink-secondary);
   margin: 0;
   word-break: break-word;
 }
@@ -4964,21 +4967,19 @@ dialog:not([open]) {
   font-weight: 600;
   padding: 6px 14px;
   border-radius: 5px;
-  border: 1px solid #f59e0b;
-  background: #f59e0b;
-  color: #0f172a;
+  border: 1px solid var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--text);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: all 0.15s ease;
-  box-shadow: 0 1px 3px rgba(245, 158, 11, 0.2);
+  transition: background 0.15s ease;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-quality-fix:hover {
-  background: #d97706;
-  border-color: #d97706;
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.35);
+  background: var(--surface-hover);
+  border-color: var(--warn);
 }
 
 /* AI Missing Advisor Modal */

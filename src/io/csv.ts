@@ -1,7 +1,7 @@
 /**
  * CSV import/export (RFC 4180): quoted fields, `""` escapes, CR LF or LF
  * rows. Type inference and missing tokens are shared with xlsx through
- * `datasetFromRows`; blank lines between records are ignored.
+ * `datasetFromRows`; blank lines in single-column files are missing records.
  */
 import { IoError } from './errors.ts'
 import { datasetFromRows, datasetRowCount, type ColumnarDataset, type RowImportOptions } from './types.ts'
@@ -22,6 +22,7 @@ function parseCsv(text: string, delimiter: string): string[][] {
   let row: string[] = []
   let cell = ''
   let inQuotes = false
+  let quoted = false
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (inQuotes) {
@@ -37,6 +38,7 @@ function parseCsv(text: string, delimiter: string): string[][] {
       }
     } else if (ch === '"' && cell === '') {
       inQuotes = true
+      quoted = true
     } else if (ch === delimiter) {
       row.push(cell)
       cell = ''
@@ -46,16 +48,17 @@ function parseCsv(text: string, delimiter: string): string[][] {
       rows.push(row)
       row = []
       cell = ''
+      quoted = false
     } else {
       cell += ch
     }
   }
-  if (cell !== '' || row.length > 0) {
+  if (cell !== '' || row.length > 0 || quoted) {
     row.push(cell)
     rows.push(row)
   }
-  // A blank line is not a record (it would be one empty field).
-  return rows.filter((r) => !(r.length === 1 && r[0] === ''))
+  // A blank record in a one-column file represents one missing case.
+  return rows[0]?.length === 1 ? rows : rows.filter((r) => !(r.length === 1 && r[0] === ''))
 }
 
 /** Import CSV bytes (RFC 4180) into the §6 dataset contract. */

@@ -26,7 +26,6 @@ import {
   redoTip,
   setDataset,
   uniqueColumnName,
-  clearHistory,
 } from "./store.ts";
 import { defaultMeta, datasetFromRows } from "./io/types.ts";
 import { importCsvBytes } from "./io/csv.ts";
@@ -46,6 +45,7 @@ import { buildResultsHtml, copyRunsToClipboard, saveChartPng } from "./exports.t
 import { extractApaSummary } from "./format.ts";
 import { runsState } from "./results.ts";
 import { openWithDialog, saveWithDialog, ioMessage } from "./fileOps.ts";
+import { resetDatasetSession, resetProjectHistory } from "./session.ts";
 import { resetAiAdvisorCache } from "./AiMissingAdvisorDialog.vue";
 import AiMissingAdvisorDialog from "./AiMissingAdvisorDialog.vue";
 import UpdateRestartModal from "./UpdateRestartModal.vue";
@@ -752,9 +752,7 @@ async function confirmCloseDataset(): Promise<void> {
   state.filename = "";
   state.sample = false;
   state.view = "data";
-  state.computedFormulas = [];
-  clearHistory();
-  runsState.runs = [];
+  resetDatasetSession();
   aiDock.value?.clear();
   resetAiAdvisorCache();
   toast("Dataset closed.");
@@ -762,17 +760,16 @@ async function confirmCloseDataset(): Promise<void> {
 
 const sampleDropdownOpen = ref(false);
 
-function loadSampleDataset(id?: string): void {
+async function loadSampleDataset(id?: string): Promise<void> {
   sampleDropdownOpen.value = false;
+  if (!(await confirmReplacement())) return;
   const def = getSampleDataset(id || "customer_churn");
   const bytes = new TextEncoder().encode(def.csv);
   const ds = importCsvBytes(bytes);
   ds.sample = true;
   setDataset(ds);
-  clearHistory();
+  resetSessionExtras();
   state.filename = def.filename;
-  aiDock.value?.clear();
-  resetAiAdvisorCache();
   toast(`Loaded ${def.name} (${def.rows} rows, ${def.cols} variables).`);
 }
 
@@ -793,19 +790,23 @@ function settleConfirm(ok: boolean): void {
   confirmState.value = null;
 }
 
+async function confirmReplacement(): Promise<boolean> {
+  return !(colCount.value || runsState.runs.length) || await askConfirm("Replace the current dataset and results? Unsaved changes will be lost.");
+}
+
+function resetSessionExtras(keepProject = false): void {
+  if (keepProject) resetProjectHistory();
+  else resetDatasetSession();
+  aiDock.value?.clear();
+  resetAiAdvisorCache();
+}
+
 async function confirmNewDataset(): Promise<void> {
-  if (
-    (rowCount.value || colCount.value) &&
-    !(await askConfirm(
-      "Replace the current dataset? Unsaved changes will be lost.",
-    ))
-  )
-    return;
+  if (!(await confirmReplacement())) return;
   setDataset({ columns: [], data: {} });
   state.filename = "";
   state.sample = false;
-  aiDock.value?.clear();
-  resetAiAdvisorCache();
+  resetSessionExtras();
   toast("New dataset created.");
 }
 
@@ -819,15 +820,14 @@ async function act(id: string): Promise<void> {
       void confirmNewDataset();
       return;
     case "file-sample":
-      loadSampleDataset();
+      void loadSampleDataset();
       return;
     case "file-open":
     case "file-import": {
       try {
-        const res = await openWithDialog(restoreRuns);
+        const res = await openWithDialog(restoreRuns, confirmReplacement);
         if (res.kind !== "cancel") {
-          aiDock.value?.clear();
-          resetAiAdvisorCache();
+          resetSessionExtras(res.kind === "project");
           toast(`Loaded ${state.filename || "dataset"}.`);
         }
       } catch (err) {
@@ -853,9 +853,11 @@ async function act(id: string): Promise<void> {
           toast("The clipboard is empty. Copy rows from a spreadsheet first.");
           return;
         }
-        setDataset(datasetFromRows(rows[0], rows.slice(1)));
-        aiDock.value?.clear();
-        resetAiAdvisorCache();
+        const dataset = datasetFromRows(rows[0], rows.slice(1));
+        if (!(await confirmReplacement())) return;
+        setDataset(dataset);
+        state.filename = "";
+        resetSessionExtras();
         toast("Data pasted.");
       } catch {
         toast(
@@ -2429,7 +2431,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="empty-state-hints">
-              <span>Supports .sav, .csv, .tsv, .xlsx, .json</span>
+              <span>Supports .sav, .csv, .xlsx, and .ara.zip projects</span>
             </div>
           </div>
         </div>

@@ -39,20 +39,20 @@
 - **Interactive Visualizations**:
   - Built-in Plotly charts: Scatter plots, Grouped/Stacked Bar charts, Histograms, and Line charts.
 - **Broad File Format Interoperability**:
-  - **SPSS `.sav`**: Full binary read and write support via `jsavvy`.
-  - **Excel `.xlsx`**: Import and export with variable metadata preservation sheet.
-  - **CSV**: RFC 4180 compliant parsing and formula-injection-safe export.
-  - **Project Archives (`.arastat`)**: Lossless single-file archives bundling data, full variable metadata, and analysis result history.
+  - **SPSS `.sav`**: Import bytecode-compressed files; uncompressed and zlib-compressed files must be re-saved with bytecode compression.
+  - **Excel `.xlsx`**: Import workbooks, including ARAStat column metadata when present.
+  - **CSV**: Import and export with spreadsheet formula protections for `=`, `+`, `@`, tab, and carriage return prefixes.
+  - **Project Archives (`.ara.zip`)**: Save and restore data, variable metadata, and analysis result history.
 - **Clean Results Pane**:
   - Hierarchical result trees with collapsible analysis runs, APA-formatted summary tables, notes, and one-click copy or HTML export.
 - **Zero Telemetry & 100% Privacy**:
-  - No account requirements, no tracking, and no external dependencies. All data and computations stay local to your machine.
+  - No account requirements or tracking. Statistical computations stay local; optional AI requests go to the provider you configure.
 
 ---
 
 ## Supported Statistical Analyses
 
-ARAStat implements 25 statistical procedures with golden-reference fixture tests verifying exact mathematical alignment against R and SPSS outputs:
+ARAStat implements 25 statistical procedures with golden-reference fixture tests; the fixtures and their provenance are available in `tests/fixtures/`:
 
 | Category                               | Analyses Included                                                                                                                                                     |
 | :------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -196,7 +196,8 @@ ARAStat separates presentation, orchestration, and statistical calculation into 
 
 - **Offline-First Execution**: Statistical tests run locally through the bundled Python engine. No network connection is required for data entry, transformations, imports, or computations.
 - **Zero Telemetry**: No analytics, tracking beacons, error monitoring services, or telemetry endpoints exist anywhere in ARAStat.
-- **Sanitized Exports**: CSV and text exports automatically escape leading formula triggers (`=`, `+`, `-`, `@`, `\t`, `\r`) to protect users from CSV formula injection vulnerabilities.
+- **AI endpoint transport**: HTTPS is supported for remote providers. HTTP is also permitted for loopback and local-network addresses; on a LAN, prompts and API credentials can be exposed to others on that network.
+- **CSV export**: Leading `=`, `+`, `@`, tab, and carriage return characters are prefixed with an apostrophe. Leading `-` is not escaped, so do not open untrusted exported text in a spreadsheet without reviewing it.
 
 ### Third-Party AI & Zero Data Retention (ZDR) Disclaimer
 
@@ -207,7 +208,7 @@ However, ARAStat includes an optional **AI Copilot (ARA Assistant)** feature tha
 > [!WARNING]
 > **User Responsibility & Consent Regarding Non-ZDR AI Endpoints:**
 >
-> 1. **Direct Connection**: When you configure and prompt an external cloud AI service, statistical excerpts and variables are transmitted directly from your computer to that third-party provider under your own API credentials.
+> 1. **Direct Connection**: When you configure and prompt an external AI service, the text you enter, schema metadata, and selected statistical output can be transmitted to that provider under your own credentials. Result explanations show a preview before sending; frequency category values are replaced with generic labels because they may identify individuals. Review other tables carefully, as aggregation does not guarantee anonymity.
 > 2. **Zero Data Retention (ZDR)**: If you connect to an external provider that does **not** enforce a Zero Data Retention (ZDR) policy or an enterprise business agreement, your data may be logged, retained, or processed according to that third party's terms of service and training policies.
 > 3. **Disclaimer of Liability**: ARAStat and its author (**Adhi Rahmadian**) are **not responsible** for how third-party AI providers collect, retain, store, or utilize data transmitted through user-configured endpoints. The user assumes sole responsibility for selecting and vetting AI providers to ensure compliance with their institutional, regulatory, and privacy requirements.
 > 4. **100% Offline AI Alternative**: If you work with sensitive, clinical, or proprietary datasets and require guaranteed Zero Data Retention, you should exclusively use **local offline engines** (such as **Ollama** or **LM Studio**)

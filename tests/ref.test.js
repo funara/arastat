@@ -1,4 +1,4 @@
-import { test, after } from 'node:test'
+import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -13,9 +13,24 @@ class SeamClient {
   #pending = new Map()
   #nextId = 1
   #buf = ''
+  #failure = null
+  #abort
 
-  constructor(stdin, stdout, onNotification) {
+  constructor(child, onNotification) {
+    const { stdin, stdout, stderr } = child
     this.#stdin = stdin
+    let stderrText = ''
+    stderr.setEncoding('utf8')
+    stderr.on('data', (chunk) => { stderrText = (stderrText + chunk).slice(-8192) })
+    const fail = (reason) => {
+      const err = new Error(`${reason}${stderrText ? `\n${stderrText}` : ''}`)
+      this.#failure = err
+      for (const { reject, timer } of this.#pending.values()) { clearTimeout(timer); reject(err) }
+      this.#pending.clear()
+    }
+    this.#abort = (reason) => { fail(reason); child.kill() }
+    child.on('error', (err) => fail(`engine could not start: ${err.message}`))
+    stdin.on('error', (err) => fail(`engine input failed: ${err.message}`))
     stdout.setEncoding('utf8')
     stdout.on('data', (chunk) => {
       this.#buf += chunk
@@ -26,10 +41,7 @@ class SeamClient {
         if (line.trim()) this.#dispatch(JSON.parse(line), onNotification)
       }
     })
-    stdout.on('close', () => {
-      for (const { reject } of this.#pending.values()) reject(new Error('engine stream closed'))
-      this.#pending.clear()
-    })
+    stdout.on('close', () => fail('engine stream closed'))
   }
 
   #dispatch(msg, onNotification) {
@@ -37,6 +49,7 @@ class SeamClient {
     const pending = this.#pending.get(msg.id)
     if (!pending) return
     this.#pending.delete(msg.id)
+    clearTimeout(pending.timer)
     if (msg.error) {
       const err = new Error(msg.error.message ?? 'engine error')
       err.code = msg.error.code ?? -1
@@ -47,10 +60,12 @@ class SeamClient {
     }
   }
 
-  invoke(method, params) {
+  invoke(method, params, timeoutMs = 60000) {
+    if (this.#failure) return Promise.reject(this.#failure)
     const id = this.#nextId++
     const { promise, resolve, reject } = Promise.withResolvers()
-    this.#pending.set(id, { resolve, reject })
+    const timer = setTimeout(() => this.#abort(`engine request ${method} timed out`), timeoutMs)
+    this.#pending.set(id, { resolve, reject, timer })
     this.#stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
     return promise
   }
@@ -100,23 +115,31 @@ function startEngine() {
     stdio: ['pipe', 'pipe', 'pipe']
   })
   const notifications = []
-  const seam = new SeamClient(child.stdin, child.stdout, (n) => notifications.push(n))
-  return { child, seam, notifications }
-}
-
-const exitCode = (child) => {
-  const { promise, resolve } = Promise.withResolvers()
-  child.on('exit', resolve)
-  return promise
+  const exited = new Promise((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }))
+    child.once('error', (error) => resolve({ error }))
+  })
+  const seam = new SeamClient(child, (n) => notifications.push(n))
+  return { child, seam, notifications, exited }
 }
 
 let engine = null
 const getEngine = () => (engine ??= startEngine())
 
+before(async () => {
+  await getEngine().seam.invoke('capabilities', null, 180000)
+})
+
 after(async () => {
   if (!engine) return
-  engine.child.stdin.end()
-  assert.equal(await exitCode(engine.child), 0)
+  if (!engine.child.stdin.destroyed) engine.child.stdin.end()
+  let timer
+  const result = await Promise.race([
+    engine.exited,
+    new Promise((resolve) => { timer = setTimeout(() => { engine.child.kill(); resolve({ error: new Error('engine shutdown timed out') }) }, 10000) })
+  ])
+  clearTimeout(timer)
+  assert.equal(result.code, 0, `engine did not exit cleanly: ${result.error ?? result.signal ?? result.code}`)
 })
 
 // --- fixture loading (mirror io datasetFromRows semantics) -------------------
@@ -258,8 +281,8 @@ test('fixture dirs cover exactly the 25 registered analyses (no skips)', () => {
 for (const id of ANALYSIS_IDS) {
   test(`golden reference: ${id}`, async () => {
     const { runId, notifications, expected } = await runFixture(id)
-    const updates = notifications.filter((n) => n.method === 'analysis/update')
-    const dones = notifications.filter((n) => n.method === 'analysis/done')
+    const updates = notifications.filter((n) => n.method === 'analysis/update' && n.params.runId === runId)
+    const dones = notifications.filter((n) => n.method === 'analysis/done' && n.params.runId === runId)
     assert.ok(updates.length >= 1, `${id}: expected at least one analysis/update`)
     assert.equal(dones.length, 1, `${id}: expected exactly one analysis/done`)
     let seq = 0
